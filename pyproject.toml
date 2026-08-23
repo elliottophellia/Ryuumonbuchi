@@ -1,0 +1,82 @@
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "ryuumonbuchi"
+version = "0.1.0"
+description = "A headless Ghidra MCP server with one-shot worker isolation."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "GPL-2.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "Ryuumonbuchi contributors" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: Software Development :: Disassemblers",
+]
+dependencies = [
+  "mcp>=2,<3",
+  "pyghidra>=3.0.2,<4",
+]
+
+[project.scripts]
+ryuumonbuchi = "ryuumonbuchi.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "coverage[toml]>=7.15,<8",
+  "ruff>=0.16,<0.17",
+  "pyright>=1.1.411,<1.2",
+  "ghidra-stubs>=12.0.4,<13",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "ANN", "B", "EM", "PERF", "PTH", "S", "SIM", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "live: requires a real Ghidra installation and compiler",
+]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["ryuumonbuchi"]
+parallel = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true

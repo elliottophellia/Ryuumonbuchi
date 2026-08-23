@@ -1,0 +1,11 @@
+[run]
+branch = True
+source =
+    ryuumonbuchi
+parallel = True
+patch =
+    subprocess
+
+[report]
+fail_under = 100
+show_missing = True
