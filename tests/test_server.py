@@ -138,6 +138,7 @@ def test_complete_catalog_handlers_with_fake_worker(
                 ("text_search", {"program_name": "hello", "query": "hello"}),
                 ("analysis_run", {"program_name": "hello"}),
                 ("analysis_options_get", {"program_name": "hello"}),
+                ("program_info", {"program_name": "hello"}),
             ]
             for name, arguments in read_calls:
                 result = await client.call_tool(name, arguments)

@@ -50,7 +50,7 @@ line-length = 100
 select = ["E", "F", "I", "ANN", "B", "EM", "PERF", "PTH", "S", "SIM", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN", "PGH003", "S101", "S108", "S603", "S607"]
+"tests/**/*.py" = ["ANN", "F405", "PGH003", "S101", "S108", "S603", "S607"]
 "src/ryuumonbuchi/worker/*.py" = ["ANN401", "EM101", "EM102", "S105"]
 "src/ryuumonbuchi/server.py" = ["ANN401", "EM101", "EM102", "UP047"]
 

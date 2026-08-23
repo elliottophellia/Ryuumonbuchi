@@ -851,6 +851,7 @@ async def _program_import(
 
 async def _program_delete(state: ServerState, program_name: str) -> ProgramDeleteResult:
     name = validate_program_name(program_name)
+    state.workspace.require_program(name)
     raw = {"action": "program_delete", "program_name": name}
     try:
         async with state.workspace.operation():

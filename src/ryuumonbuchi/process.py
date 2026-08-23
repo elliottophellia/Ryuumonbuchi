@@ -70,6 +70,7 @@ class WorkerRunner:
     def __init__(self, config: AppConfig, workspace: SessionWorkspace) -> None:
         self.config = config
         self.workspace = workspace
+        self._clock = time.monotonic
         self.active_worker_pid: int | None = None
         self.last_worker_pid: int | None = None
 
@@ -122,7 +123,7 @@ class WorkerRunner:
             process = self._spawn(request_path, response_path, log_path)
             self.last_worker_pid = process.pid
             self.active_worker_pid = process.pid
-            deadline = time.monotonic() + min(
+            deadline = self._clock() + min(
                 self.config.operation_timeout_seconds,
                 timeout_seconds
                 if timeout_seconds is not None
@@ -189,7 +190,7 @@ class WorkerRunner:
         log_path: Path,
     ) -> None:
         while process.poll() is None:
-            if time.monotonic() >= deadline:
+            if self._clock() >= deadline:
                 message = f"worker request timed out: {request_id}"
                 raise WorkerTimeoutError(
                     message,
@@ -293,8 +294,8 @@ class WorkerRunner:
         pid = process.pid
         with contextlib.suppress(ProcessLookupError):
             os.killpg(pid, signal.SIGTERM)
-        deadline = time.monotonic() + 5.0
-        while process.poll() is None and time.monotonic() < deadline:
+        deadline = self._clock() + 5.0
+        while process.poll() is None and self._clock() < deadline:
             await asyncio.sleep(0.05)
         if process.poll() is None:
             with contextlib.suppress(ProcessLookupError):
