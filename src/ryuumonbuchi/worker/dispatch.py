@@ -10,7 +10,6 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 
 from ..models import (
-    READ_ACTIONS,
     AnalysisListAnalyzersOperation,
     AnalysisOptionsGetOperation,
     AnalysisOptionsSetOperation,
@@ -51,10 +50,6 @@ def parse_operation(raw: dict[str, Any]) -> WorkerOperation:
     """Validate one discriminated operation without allowing arbitrary calls."""
 
     return cast(WorkerOperation, _WORKER_ADAPTER.validate_python(raw))
-
-
-def is_read_only(action: str) -> bool:
-    return action in READ_ACTIONS
 
 
 def execute_operation(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import runpy
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -113,15 +113,22 @@ def test_cli_version_and_validation(fake_ghidra: Path, capsys, monkeypatch) -> N
     assert called[0].ghidra_install_dir == fake_ghidra.resolve()
 
 
-def test_module_entrypoint_version(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["ryuumonbuchi", "--version"])
-    runpy.run_module("ryuumonbuchi.__main__", run_name="__main__")
-    assert capsys.readouterr().out.strip() == "0.2.0"
+def test_module_entrypoint_version() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "ryuumonbuchi", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == "0.2.0\n"
+    assert completed.stderr == ""
 
 
 def test_session_manifest_corruption_and_transitions(tmp_path: Path) -> None:
     workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path)
     try:
+        valid_time = workspace.created_at.isoformat()
         workspace.manifest_path.write_text("not-json", encoding="utf-8")
         with pytest.raises(SessionError, match="unreadable"):
             workspace.read_manifest()
@@ -133,7 +140,7 @@ def test_session_manifest_corruption_and_transitions(tmp_path: Path) -> None:
                 {
                     "schema": 1,
                     "session_id": workspace.session_id,
-                    "created_at": "now",
+                    "created_at": valid_time,
                     "ghidra_version": "12",
                     "programs": "bad",
                 }
@@ -145,20 +152,102 @@ def test_session_manifest_corruption_and_transitions(tmp_path: Path) -> None:
         valid_manifest = {
             "schema": 1,
             "session_id": workspace.session_id,
-            "created_at": "now",
+            "created_at": valid_time,
             "ghidra_version": "12",
             "programs": [],
         }
         workspace.manifest_path.write_text(json.dumps(valid_manifest), encoding="utf-8")
         with pytest.raises(ProgramNotFoundError):
             workspace.remove_program("missing")
-        replacement_id, replacement = asyncio.run(workspace.replace("12.0.4"))
-        assert replacement_id != replacement.session_id
-        asyncio.run(replacement.close())
-    except BaseException:
+    finally:
         if not workspace.closed:
             asyncio.run(workspace.close())
-        raise
+
+
+def test_session_manifest_type_corruption(tmp_path: Path) -> None:
+    workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path)
+    try:
+        valid_time = workspace.created_at.isoformat()
+        base = {
+            "schema": 1,
+            "session_id": workspace.session_id,
+            "created_at": valid_time,
+            "ghidra_version": "12",
+            "programs": [],
+        }
+        cases = [
+            {**base, "session_id": 1},
+            {**base, "created_at": "bad"},
+            {**base, "ghidra_version": 12},
+            {key: value for key, value in base.items() if key != "session_id"},
+            {
+                **base,
+                "programs": [
+                    {
+                        "program_name": "bad",
+                        "source_sha256": "hash",
+                        "imported_at": valid_time,
+                        "analyzed": False,
+                    }
+                ],
+            },
+            {
+                **base,
+                "programs": [
+                    {
+                        "program_name": "bad",
+                        "source_path": "source",
+                        "source_sha256": "hash",
+                        "imported_at": "bad",
+                        "analyzed": False,
+                    }
+                ],
+            },
+            {
+                **base,
+                "programs": [
+                    {
+                        "program_name": "bad",
+                        "source_path": "source",
+                        "source_sha256": "hash",
+                        "imported_at": valid_time,
+                        "analyzed": "false",
+                    }
+                ],
+            },
+            {
+                **base,
+                "programs": [
+                    {
+                        "program_name": "bad",
+                        "source_path": "source",
+                        "source_sha256": "hash",
+                        "imported_at": valid_time,
+                        "analyzed": False,
+                        "language_id": 1,
+                    }
+                ],
+            },
+            {
+                **base,
+                "programs": [
+                    {
+                        "program_name": "bad",
+                        "source_path": "source",
+                        "source_sha256": "hash",
+                        "imported_at": valid_time,
+                        "analyzed": False,
+                        "processor": 1,
+                    }
+                ],
+            },
+        ]
+        for case in cases:
+            workspace.manifest_path.write_text(json.dumps(case), encoding="utf-8")
+            with pytest.raises(SessionError, match="invalid record"):
+                workspace.read_manifest()
+    finally:
+        asyncio.run(workspace.close())
 
 
 def test_session_cleanup_and_sha_errors(tmp_path: Path) -> None:
@@ -184,8 +273,8 @@ def test_worker_response_variants(
         WorkerSuccess(request_id="request", result={"ok": True}).model_dump_json(by_alias=True),
         encoding="utf-8",
     )
-    assert runner._read_response(response, "request", True, log, run_dir).result == {"ok": True}
-    run_dir.mkdir()
+    assert runner._read_response(response, "request", True, log).result == {"ok": True}
+    run_dir.mkdir(exist_ok=True)
     response = run_dir / "response.json"
     response.write_text(
         WorkerFailure(
@@ -195,7 +284,7 @@ def test_worker_response_variants(
         encoding="utf-8",
     )
     with pytest.raises(WorkerOperationError, match="bad"):
-        runner._read_response(response, "request", True, log, run_dir)
+        runner._read_response(response, "request", True, log)
 
 
 def test_worker_wait_timeout_and_nonzero(

@@ -21,8 +21,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
-from .config import safe_descendant
-
 SESSION_SCHEMA = 1
 PROJECT_NAME = "ryuumonbuchi"
 _PROGRAM_NAME_PATTERN = re.compile(r"^[^/\\\x00]+$")
@@ -175,38 +173,69 @@ class SessionWorkspace:
         if not isinstance(raw_programs_value, list):
             message = "Session manifest programs must be a list"
             raise SessionError(message)
-        raw_programs = cast(list[object], raw_programs_value)
-        programs: dict[str, ProgramRecord] = {}
+        session_id = data.get("session_id")
+        created_at = data.get("created_at")
+        ghidra_version = data.get("ghidra_version")
+        if (
+            not isinstance(session_id, str)
+            or not isinstance(created_at, str)
+            or not isinstance(ghidra_version, str)
+        ):
+            message = "Session manifest has an invalid record"
+            raise SessionError(message)
+        if session_id != self.session_id:
+            message = "Session manifest belongs to another session"
+            raise SessionError(message)
         try:
-            for raw_value in raw_programs:
+            datetime.fromisoformat(created_at)
+            programs: dict[str, ProgramRecord] = {}
+            for raw_value in cast(list[object], raw_programs_value):
                 if not isinstance(raw_value, dict):
                     message = "program record is not an object"
                     raise TypeError(message)
                 raw = cast(dict[str, object], raw_value)
+                program_name_value = raw.get("program_name")
+                source_path_value = raw.get("source_path")
+                source_sha256_value = raw.get("source_sha256")
+                imported_at_value = raw.get("imported_at")
+                if (
+                    not isinstance(program_name_value, str)
+                    or not isinstance(source_path_value, str)
+                    or not isinstance(source_sha256_value, str)
+                    or not isinstance(imported_at_value, str)
+                ):
+                    message = "Session manifest has an invalid record"
+                    raise ValueError(message)
+                analyzed = raw.get("analyzed")
+                if not isinstance(analyzed, bool):
+                    message = "Session manifest has an invalid record"
+                    raise ValueError(message)
+                language_id = raw.get("language_id")
+                processor = raw.get("processor")
+                if (language_id is not None and not isinstance(language_id, str)) or (
+                    processor is not None and not isinstance(processor, str)
+                ):
+                    message = "Session manifest has an invalid record"
+                    raise ValueError(message)
+                datetime.fromisoformat(imported_at_value)
                 record = ProgramRecord(
-                    program_name=validate_program_name(raw.get("program_name")),
-                    source_path=str(raw.get("source_path")),
-                    source_sha256=str(raw.get("source_sha256")),
-                    imported_at=str(raw.get("imported_at")),
-                    analyzed=bool(raw.get("analyzed")),
-                    language_id=cast(str | None, raw.get("language_id")),
-                    processor=cast(str | None, raw.get("processor")),
+                    program_name=validate_program_name(program_name_value),
+                    source_path=source_path_value,
+                    source_sha256=source_sha256_value,
+                    imported_at=imported_at_value,
+                    analyzed=analyzed,
+                    language_id=language_id,
+                    processor=processor,
                 )
                 if record.program_name in programs:
                     message = f"Duplicate program in session manifest: {record.program_name}"
                     raise SessionError(message)
                 programs[record.program_name] = record
-            session_id = str(data["session_id"])
-            created_at = str(data["created_at"])
-            ghidra_version = str(data["ghidra_version"])
-        except (KeyError, TypeError, ValueError) as exc:
-            if isinstance(exc, SessionError):
-                raise
+        except SessionError:
+            raise
+        except (TypeError, ValueError) as exc:
             message = "Session manifest has an invalid record"
             raise SessionError(message) from exc
-        if session_id != self.session_id:
-            message = "Session manifest belongs to another session"
-            raise SessionError(message)
         return SessionManifest(session_id, created_at, ghidra_version, programs)
 
     def _write_manifest(self, manifest: SessionManifest) -> None:
@@ -285,12 +314,6 @@ class SessionWorkspace:
         async with self.operation_lock:
             yield
 
-    async def replace(self, ghidra_version: str) -> tuple[str, SessionWorkspace]:
-        old_session_id = self.session_id
-        await self.close()
-        replacement = SessionWorkspace.create(ghidra_version, temp_dir=self.root.parent)
-        return old_session_id, replacement
-
     async def close(self) -> None:
         if self._closed:
             return
@@ -368,13 +391,3 @@ def stream_sha256(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
         while chunk := handle.read(chunk_size):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def validate_workspace_path(path: Path, workspace: SessionWorkspace) -> Path:
-    """Resolve a path and require it to stay below this session root."""
-
-    resolved = path.expanduser().resolve()
-    if not safe_descendant(resolved, workspace.root) or resolved == workspace.root:
-        message = f"Path is outside the current session workspace: {resolved}"
-        raise SessionError(message)
-    return resolved

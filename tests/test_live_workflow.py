@@ -22,13 +22,13 @@ SLEEP_INSTRUCTION_ADDRESS = "001019e7"
 EXPECTED_FLAG = "Alpaca{G00d_Morning_AlpacaH4ck!}"
 
 
-def _config() -> AppConfig:
-    return build_config(max_cpu=1, max_heap_mb=512)
+def _config(live_ghidra: Path) -> AppConfig:
+    return build_config(ghidra_install_dir=live_ghidra, max_cpu=1, max_heap_mb=512)
 
 
-def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
+def test_print_flag_workflow_import_patch_export_run(tmp_path: Path, live_ghidra: Path) -> None:
     async def run() -> None:
-        server = create_server(_config())
+        server = create_server(_config(live_ghidra))
         async with Client(server, raise_exceptions=True) as client:
             imported = await client.call_tool(
                 "program_import", {"source_path": str(FIXTURE), "program_name": "print_flag"}
@@ -98,7 +98,7 @@ def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
-    completed = subprocess.run(  # noqa: S603
+    completed = subprocess.run(
         [str(tmp_path / "patched_flag")],
         capture_output=True,
         check=False,
@@ -108,12 +108,12 @@ def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
     assert EXPECTED_FLAG in completed.stdout.decode()
 
 
-def test_print_flag_export_refuses_overwrite(tmp_path: Path) -> None:
+def test_print_flag_export_refuses_overwrite(tmp_path: Path, live_ghidra: Path) -> None:
     destination = tmp_path / "patched_flag"
     destination.write_bytes(b"occupied")
 
     async def run() -> None:
-        server = create_server(_config())
+        server = create_server(_config(live_ghidra))
         async with Client(server, raise_exceptions=True) as client:
             imported = await client.call_tool(
                 "program_import", {"source_path": str(FIXTURE), "program_name": "print_flag"}

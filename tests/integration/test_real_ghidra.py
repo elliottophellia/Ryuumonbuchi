@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
 from pathlib import Path
 
@@ -17,17 +16,21 @@ from ryuumonbuchi.server import create_server
 pytestmark = pytest.mark.live
 
 
-def test_real_ghidra_import_read_and_cleanup(tmp_path: Path) -> None:
-    ghidra = os.environ.get("GHIDRA_INSTALL_DIR", "/usr/share/ghidra")
-    if not Path(ghidra).is_dir():
-        pytest.skip("real Ghidra installation is unavailable")
+def test_real_ghidra_import_read_and_cleanup(
+    tmp_path: Path, live_ghidra: Path, c_compiler: str
+) -> None:
     source = tmp_path / "hello.c"
     binary = tmp_path / "hello"
     source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
-    subprocess.run(["cc", "-O0", "-g", "-o", str(binary), str(source)], check=True)  # noqa: S603, S607
+    subprocess.run(
+        [c_compiler, "-O0", "-g", "-o", str(binary), str(source)],
+        check=True,
+    )
 
     async def run() -> None:
-        server = create_server(build_config(ghidra_install_dir=ghidra, max_cpu=1, max_heap_mb=512))
+        server = create_server(
+            build_config(ghidra_install_dir=live_ghidra, max_cpu=1, max_heap_mb=512)
+        )
         async with Client(server, raise_exceptions=True) as client:
             imported = await client.call_tool(
                 "program_import",

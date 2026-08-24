@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-import runpy
+import subprocess
 import sys
 import types
 from contextlib import contextmanager
@@ -461,8 +461,6 @@ def test_dispatch_parses_read_only_and_routes_every_operation(monkeypatch):
             )
             == operation.action
         )
-    assert dispatch.is_read_only("function_list")
-    assert not dispatch.is_read_only("edit_patch_bytes")
     with pytest.raises(ValidationError):
         dispatch.parse_operation({"action": "not-an-operation"})
 
@@ -647,11 +645,27 @@ def test_worker_entry_program_save_errors(tmp_path, monkeypatch):
     with pytest.raises(OperationError, match="destination already exists"):
         worker_entry._save_program(context, SimpleNamespace(program_name="hello"), operation)
 
+    missing_parent = tmp_path / "missing" / "snapshot.gzf"
+    operation = operation.model_copy(update={"destination_path": str(missing_parent)})
+    with pytest.raises(WorkerGhidraError, match="cannot write destination"):
+        worker_entry._save_program(context, SimpleNamespace(program_name="hello"), operation)
+
+    monkeypatch.setattr(
+        Path,
+        "replace",
+        lambda self, target: (_ for _ in ()).throw(OSError("replace")),
+    )
+    operation = operation.model_copy(update={"destination_path": str(tmp_path / "failure.gzf")})
+    with pytest.raises(WorkerGhidraError, match="cannot write destination"):
+        worker_entry._save_program(context, SimpleNamespace(program_name="hello"), operation)
+    assert not list(tmp_path.glob("failure.gzf.tmp*"))
+
 
 def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
+    real_write_response = worker_entry._write_response
     request = _request(tmp_path, read_only=True)
-    context = SimpleNamespace()
     program = _FakeProgram()
+    context = SimpleNamespace()
 
     @contextmanager
     def selected(name, read_only):
@@ -727,7 +741,8 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
     import_op = _request(
         tmp_path,
         operations=[{"action": "program_import", "source_path": "x", "program_name": "new"}],
-        program_name=None,
+        program_name="new",
+        read_only=False,
     )
     write_request(request_path, import_op)
     monkeypatch.setattr(worker_entry, "_import_program", lambda *args: {"program_name": "new"})
@@ -736,7 +751,8 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
     delete_op = _request(
         tmp_path,
         operations=[{"action": "program_delete", "program_name": "new"}],
-        program_name=None,
+        program_name="new",
+        read_only=False,
     )
     write_request(request_path, delete_op)
     monkeypatch.setattr(worker_entry, "_delete_program", lambda *args: {"deleted": True})
@@ -747,7 +763,8 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
         operations=[
             {"action": "program_import_bytes", "data": "Ynl0ZXM=", "program_name": "bytes"}
         ],
-        program_name=None,
+        program_name="bytes",
+        read_only=False,
     )
     write_request(request_path, import_bytes_op)
     monkeypatch.setattr(
@@ -759,6 +776,7 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
         tmp_path,
         operations=[{"action": "program_save", "destination_path": str(tmp_path / "snapshot.gzf")}],
         program_name="new",
+        read_only=False,
     )
     write_request(request_path, save_op)
     monkeypatch.setattr(worker_entry, "_save_program", lambda *args: {"saved": True})
@@ -787,7 +805,23 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
         "_write_response",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("write")),
     )
-    assert worker_entry.worker_main(request_path, response_path) == 0
+    assert worker_entry.worker_main(request_path, response_path) == 1
+    monkeypatch.setattr(worker_entry, "_write_response", real_write_response)
+
+    class CombinedFailure(_FakeWorkerContext):
+        def close(self):
+            message = "cleanup after operation"
+            raise RuntimeError(message)
+
+    monkeypatch.setattr(worker_entry, "WorkerContext", CombinedFailure)
+    monkeypatch.setattr(
+        worker_entry,
+        "_execute_batch",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("operation")),
+    )
+    write_request(request_path, request)
+    assert worker_entry.worker_main(request_path, response_path) == 1
+    assert json.loads(response_path.read_text())["error"]["code"] == "worker_failed"
 
 
 def test_worker_entry_main_argument_contract(monkeypatch):
@@ -796,13 +830,19 @@ def test_worker_entry_main_argument_contract(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["worker", "request", "response"])
     monkeypatch.setattr(worker_entry, "worker_main", lambda request, response: 7)
     assert worker_entry.main() == 7
-    monkeypatch.setattr(sys, "argv", ["worker"])
-    with pytest.raises(SystemExit) as exc:
-        runpy.run_module("ryuumonbuchi.worker.__main__", run_name="__main__")
-    assert exc.value.code == 2
+    completed = subprocess.run(
+        [sys.executable, "-m", "ryuumonbuchi.worker"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == ("usage: python -m ryuumonbuchi.worker REQUEST_JSON RESPONSE_JSON\n")
 
 
 def test_worker_context_invalid_project_and_close_after_project_error(tmp_path, monkeypatch):
+
     request = _request(tmp_path)
     context = WorkerContext(request)
     project = _FakeProject()
@@ -817,6 +857,72 @@ def test_worker_context_invalid_project_and_close_after_project_error(tmp_path, 
     with pytest.raises(WorkerGhidraError, match="cleanup failed"):
         context.close()
     assert context._closed
+
+
+def test_worker_entry_envelope_mismatches(tmp_path, monkeypatch):
+    cases = [
+        (
+            _request(tmp_path, read_only=False),
+            "worker read_only flag does not match operation set",
+        ),
+        (
+            _request(
+                tmp_path,
+                read_only=True,
+                operations=[{"action": "edit_patch_bytes", "address": "1000", "bytes_hex": "90"}],
+            ),
+            "worker read_only flag does not match operation set",
+        ),
+        (
+            _request(
+                tmp_path,
+                read_only=False,
+                program_name="other",
+                operations=[
+                    {"action": "program_import", "source_path": "source", "program_name": "new"}
+                ],
+            ),
+            "worker program_name does not match lifecycle operation",
+        ),
+        (
+            _request(
+                tmp_path,
+                read_only=False,
+                program_name="other",
+                operations=[
+                    {"action": "program_import_bytes", "data": "Ynl0ZXM=", "program_name": "new"}
+                ],
+            ),
+            "worker program_name does not match lifecycle operation",
+        ),
+        (
+            _request(
+                tmp_path,
+                read_only=False,
+                program_name=None,
+                operations=[{"action": "program_save", "destination_path": "snapshot.gzf"}],
+            ),
+            "worker program_name does not match lifecycle operation",
+        ),
+        (
+            _request(
+                tmp_path,
+                read_only=False,
+                program_name="other",
+                operations=[{"action": "program_delete", "program_name": "new"}],
+            ),
+            "worker program_name does not match lifecycle operation",
+        ),
+    ]
+    monkeypatch.setattr(worker_entry, "WorkerContext", _FakeWorkerContext)
+    request_path = tmp_path / "request.json"
+    response_path = tmp_path / "response.json"
+    for request, message in cases:
+        request_path.write_text(request.model_dump_json(by_alias=True), encoding="utf-8")
+        assert worker_entry.worker_main(request_path, response_path) == 0
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+        assert response["error"]["code"] == "ghidra_error"
+        assert response["error"]["message"] == message
 
 
 def test_worker_lifecycle_batch_and_rollback_cleanup_branches(tmp_path, monkeypatch):

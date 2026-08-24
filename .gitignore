@@ -25,3 +25,4 @@ sessions/
 *.lock
 *.lock~
 !uv.lock
+PLAN_*.md

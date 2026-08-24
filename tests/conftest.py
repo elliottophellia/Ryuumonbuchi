@@ -4,13 +4,66 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
+import shutil
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from ryuumonbuchi.config import AppConfig
+from ryuumonbuchi.config import AppConfig, ConfigError, validate_ghidra_installation
 from ryuumonbuchi.session import SessionWorkspace
+
+
+def _java_major(java_path: str) -> int | None:
+    try:
+        completed = subprocess.run(
+            [java_path, "-version"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    match = re.search(r'"(\d+)(?:\.(\d+))?', completed.stdout + completed.stderr)
+    if match is None:
+        return None
+    major = int(match.group(1))
+    return int(match.group(2)) if major == 1 and match.group(2) else major
+
+
+def _require_live(message: str) -> None:
+    if os.environ.get("RYUUMONBUCHI_REQUIRE_LIVE") == "1":
+        pytest.fail(message, pytrace=False)
+    pytest.skip(message)
+
+
+@pytest.fixture(autouse=True)
+def live_ghidra(request: pytest.FixtureRequest) -> Path | None:
+    node: Any = cast(Any, request).node
+    marker = getattr(node, "get_closest_marker", None)
+    if marker is None or marker("live") is None:
+        return None
+    ghidra_path = os.environ.get("GHIDRA_INSTALL_DIR", "/usr/share/ghidra")
+    try:
+        installation = validate_ghidra_installation(ghidra_path)
+    except (ConfigError, FileNotFoundError) as exc:
+        _require_live(f"live tests require a valid Ghidra installation: {exc}")
+        return None
+    java_path = shutil.which("java")
+    if java_path is None or (_java_major(java_path) or 0) < installation.java_min:
+        _require_live(f"live tests require Java {installation.java_min} or newer")
+    return installation.path
+
+
+@pytest.fixture
+def c_compiler() -> str:
+    compiler = shutil.which("cc")
+    if compiler is None:
+        _require_live("live test requires cc")
+    return compiler or ""
 
 
 @pytest.fixture
