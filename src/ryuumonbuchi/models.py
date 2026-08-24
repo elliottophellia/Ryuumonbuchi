@@ -27,6 +27,7 @@ GraphNodes = Annotated[int, Field(ge=1, le=500)]
 ProgramName = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 HexPattern = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 CommentText = Annotated[str, StringConstraints(max_length=1_048_576)]
+MinStringLength = Annotated[int, Field(ge=1, le=4096)]
 
 
 class WireModel(BaseModel):
@@ -287,6 +288,7 @@ class MemoryReadOperation(WireModel):
 class SearchStringsOperation(WireModel):
     action: Literal["search_strings"] = "search_strings"
     query: str | None = None
+    min_length: MinStringLength = 4
     offset: Offset = 0
     page_size: PageSize = 100
 

@@ -274,6 +274,13 @@ def search_strings(
                 if monitor.isCancelled():
                     break
                 address = block.getStart().add(offset)
+                if offset > 0:
+                    try:
+                        previous = int(program.getMemory().getByte(address.subtract(1))) & 0xFF
+                    except Exception:
+                        previous = 0
+                    if 0x20 <= previous <= 0x7E:
+                        continue
                 chars: list[int] = []
                 for index in range(MAX_CSTRING_BYTES):
                     try:
@@ -283,7 +290,7 @@ def search_strings(
                     if value < 0x20 or value > 0x7E:
                         break
                     chars.append(value)
-                if len(chars) >= 4:
+                if len(chars) >= operation.min_length:
                     text = bytes(chars).decode("ascii")
                     if query is None or query in text.casefold():
                         yield StringMatch(

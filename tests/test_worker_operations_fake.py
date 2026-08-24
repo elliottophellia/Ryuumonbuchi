@@ -87,6 +87,9 @@ class Addr:
     def add(self, amount: int):
         return Addr(self.value + amount)
 
+    def subtract(self, amount: int):
+        return Addr(self.value - amount)
+
     def __hash__(self):
         return hash(self.value)
 
@@ -715,3 +718,25 @@ def test_search_strings_exception_and_full_scan_edges(monkeypatch):
     program.memory = FullMemory()
     result = ops.search_strings(program, SearchStringsOperation(), Monitor())
     assert result.items and result.items[0].length == 4096
+
+
+def test_search_strings_deduplicates_overlapping_runs(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    program.memory = Memory()
+    program.memory.blocks = [Block(payload=b"alpha beta!\x00\x00gap")]
+    result = ops.search_strings(program, SearchStringsOperation(), Monitor())
+    assert [item.value for item in result.items] == ["alpha beta!"]
+
+
+def test_search_strings_min_length_filters_short_runs(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    program.memory = Memory()
+    program.memory.blocks = [Block(payload=b"alpha beta!\x00\x00gap")]
+    result = ops.search_strings(program, SearchStringsOperation(min_length=4), Monitor())
+    assert [item.value for item in result.items] == ["alpha beta!"]
+    tiny = ops.search_strings(program, SearchStringsOperation(min_length=20), Monitor())
+    assert not tiny.items
+    gap = ops.search_strings(program, SearchStringsOperation(min_length=3), Monitor())
+    assert [item.value for item in gap.items] == ["alpha beta!", "gap"]

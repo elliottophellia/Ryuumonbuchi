@@ -455,18 +455,25 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
     async def search_strings(
         program_name: str,
         query: str | None = None,
+        min_length: int = 4,
         offset: int = 0,
         page_size: int = 100,
         *,
         ctx: Context[ServerState, Any],
     ) -> Page[StringMatch]:
-        """Search bounded printable strings."""
+        """Search bounded printable strings.
+
+        Matches are maximal printable runs: overlapping substrings are
+        deduplicated and only runs of at least min_length bytes are returned.
+        """
 
         result = await _guard(
             _run_program(
                 _state(ctx),
                 program_name,
-                SearchStringsOperation(query=query, offset=offset, page_size=page_size),
+                SearchStringsOperation(
+                    query=query, min_length=min_length, offset=offset, page_size=page_size
+                ),
                 read_only=True,
             )
         )
@@ -808,7 +815,38 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         result = await _guard(_run_batch(_state(ctx), program_name, operations))
         return BatchResult.model_validate(result)
 
+    _enforce_selector_schemas(mcp)
     return mcp
+
+
+SELECTOR_TOOL_NAMES = frozenset(
+    {
+        "function_get",
+        "function_decompile",
+        "call_graph",
+        "edit_rename_function",
+        "edit_set_prototype",
+    }
+)
+
+
+def _enforce_selector_schemas(mcp: MCPServer[ServerState]) -> None:
+    """Embed the exactly-one selector constraint in tool parameter schemas.
+
+    Tool schemas are derived from the flat function signature, which cannot
+    express the XOR between ``address`` and ``name``. The operation models
+    validate it at call time; this makes the contract visible to clients
+    before they call.
+    """
+
+    for name in SELECTOR_TOOL_NAMES:
+        tool = mcp._tool_manager.get_tool(name)  # pyright: ignore[reportPrivateUsage]
+        if tool is None:
+            raise RuntimeError(f"selector tool not registered: {name}")
+        tool.parameters["oneOf"] = [
+            {"required": ["address"], "not": {"required": ["name"]}},
+            {"required": ["name"], "not": {"required": ["address"]}},
+        ]
 
 
 async def _program_info_async(state: ServerState, program_name: str) -> ProgramInfo:

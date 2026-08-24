@@ -192,3 +192,43 @@ def test_complete_catalog_handlers_with_fake_worker(
     finally:
         if not workspace.closed:
             asyncio.run(workspace.close())
+
+
+def test_selector_tool_schemas_encode_exactly_one() -> None:
+    config = AppConfig(
+        Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+    )
+    server = create_server(config)
+
+    async def run() -> None:
+        async with Client(server, raise_exceptions=True) as client:
+            result = await client.list_tools()
+        tools = {tool.name: tool for tool in next(e for e in result if e[0] == "tools")[1]}
+        constraint = [
+            {"required": ["address"], "not": {"required": ["name"]}},
+            {"required": ["name"], "not": {"required": ["address"]}},
+        ]
+        for name in (
+            "function_get",
+            "function_decompile",
+            "call_graph",
+            "edit_rename_function",
+            "edit_set_prototype",
+        ):
+            assert tools[name].input_schema.get("oneOf") == constraint, name
+        assert "oneOf" not in tools["memory_read"].input_schema
+
+    asyncio.run(run())
+
+
+def test_selector_schema_enforcement_missing_tool() -> None:
+    from unittest.mock import MagicMock
+
+    from ryuumonbuchi.server import _enforce_selector_schemas  # pyright: ignore[reportPrivateUsage]
+
+    manager = MagicMock()
+    manager.get_tool.return_value = None
+    mcp = MagicMock()
+    mcp._tool_manager = manager
+    with pytest.raises(RuntimeError, match="selector tool not registered"):
+        _enforce_selector_schemas(mcp)
