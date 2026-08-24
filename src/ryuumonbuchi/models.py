@@ -27,6 +27,7 @@ GraphNodes = Annotated[int, Field(ge=1, le=500)]
 ProgramName = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 HexPattern = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 CommentText = Annotated[str, StringConstraints(max_length=1_048_576)]
+MinStringLength = Annotated[int, Field(ge=1, le=4096)]
 
 
 class WireModel(BaseModel):
@@ -52,6 +53,8 @@ class HealthResult(WireModel):
     max_heap_mb: int
     max_cpu: int
     operation_timeout_seconds: int
+    max_response_bytes: int
+    max_log_tail_bytes: int
     session_id: str
     tracked_program_count: int = Field(ge=0)
     worker_running: Literal[False] = False
@@ -91,6 +94,8 @@ class ProgramInfo(WireModel):
     imported_at: datetime
     analyzed: bool
     ghidra_version: str
+    language_id: str | None = None
+    processor: str | None = None
 
 
 class ProgramListResult(WireModel):
@@ -216,6 +221,29 @@ class AnalysisOptions(WireModel):
     values: dict[str, bool | int | float | str]
 
 
+class AnalyzerSummary(WireModel):
+    name: str
+    analyzer_class: str
+    type: str
+    default_enabled: bool
+    can_analyze: bool
+    prototype: bool = False
+
+
+class AnalysisListAnalyzersOperation(WireModel):
+    action: Literal["analysis_list_analyzers"] = "analysis_list_analyzers"
+    query: str | None = None
+    offset: Offset = 0
+    page_size: PageSize = 100
+
+
+class SetDataTypeOperation(WireModel):
+    action: Literal["edit_set_data_type"] = "edit_set_data_type"
+    address: str
+    data_type: str = Field(min_length=1, max_length=256)
+    length: int | None = Field(default=None, ge=1, le=1_048_576)
+
+
 class MutationResult(WireModel):
     changed: bool
     program_name: str
@@ -287,6 +315,8 @@ class MemoryReadOperation(WireModel):
 class SearchStringsOperation(WireModel):
     action: Literal["search_strings"] = "search_strings"
     query: str | None = None
+    min_length: MinStringLength = 4
+    defined_only: bool = False
     offset: Offset = 0
     page_size: PageSize = 100
 
@@ -401,9 +431,22 @@ class RedoOperation(WireModel):
     count: Count = 1
 
 
-class ProgramImportOperation(WireModel):
-    action: Literal["program_import"] = "program_import"
-    source_path: str
+class ProgramSaveOperation(WireModel):
+    action: Literal["program_save"] = "program_save"
+    destination_path: str = Field(min_length=1, max_length=4096)
+    overwrite: bool = False
+
+
+class ProgramSaveResult(WireModel):
+    program_name: str
+    destination_path: str
+    bytes_written: int = Field(ge=0)
+    overwritten: bool = False
+
+
+class ProgramImportBytesOperation(WireModel):
+    action: Literal["program_import_bytes"] = "program_import_bytes"
+    data: str = Field(min_length=1, max_length=100_663_296)
     program_name: ProgramName
     analyze: bool = True
 
@@ -411,6 +454,26 @@ class ProgramImportOperation(WireModel):
 class ProgramDeleteOperation(WireModel):
     action: Literal["program_delete"] = "program_delete"
     program_name: ProgramName
+
+
+class ProgramExportOperation(WireModel):
+    action: Literal["program_export"] = "program_export"
+    destination_path: str = Field(min_length=1, max_length=4096)
+    overwrite: bool = False
+
+
+class ProgramExportResult(WireModel):
+    program_name: str
+    destination_path: str
+    bytes_written: int = Field(ge=0)
+    overwritten: bool = False
+
+
+class ProgramImportOperation(WireModel):
+    action: Literal["program_import"] = "program_import"
+    source_path: str
+    program_name: ProgramName
+    analyze: bool = True
 
 
 type BatchOperation = Annotated[
@@ -432,19 +495,24 @@ type BatchOperation = Annotated[
     | AnalysisRunOperation
     | AnalysisOptionsGetOperation
     | AnalysisOptionsSetOperation
+    | AnalysisListAnalyzersOperation
     | RenameFunctionOperation
     | RenameVariableOperation
     | SetCommentOperation
+    | SetDataTypeOperation
     | SetPrototypeOperation
     | PatchBytesOperation
+    | ProgramExportOperation
     | UndoOperation
     | RedoOperation,
     Field(discriminator="action"),
 ]
-
-
 type WorkerOperation = Annotated[
-    BatchOperation | ProgramImportOperation | ProgramDeleteOperation,
+    BatchOperation
+    | ProgramImportOperation
+    | ProgramImportBytesOperation
+    | ProgramSaveOperation
+    | ProgramDeleteOperation,
     Field(discriminator="action"),
 ]
 
@@ -466,6 +534,7 @@ READ_ACTIONS = frozenset(
         "byte_search",
         "text_search",
         "analysis_options_get",
+        "analysis_list_analyzers",
     }
 )
 

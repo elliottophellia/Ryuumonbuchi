@@ -93,7 +93,7 @@ def test_config_private_parser_errors(tmp_path: Path) -> None:
 
 def test_cli_version_and_validation(fake_ghidra: Path, capsys, monkeypatch) -> None:
     cli.main(["--version"])
-    assert capsys.readouterr().out.strip() == "0.1.0"
+    assert capsys.readouterr().out.strip() == "0.2.0"
     with pytest.raises(SystemExit):
         cli.main(["--ghidra-install-dir", str(fake_ghidra / "missing")])
     called: list[AppConfig] = []
@@ -116,7 +116,7 @@ def test_cli_version_and_validation(fake_ghidra: Path, capsys, monkeypatch) -> N
 def test_module_entrypoint_version(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys, "argv", ["ryuumonbuchi", "--version"])
     runpy.run_module("ryuumonbuchi.__main__", run_name="__main__")
-    assert capsys.readouterr().out.strip() == "0.1.0"
+    assert capsys.readouterr().out.strip() == "0.2.0"
 
 
 def test_session_manifest_corruption_and_transitions(tmp_path: Path) -> None:

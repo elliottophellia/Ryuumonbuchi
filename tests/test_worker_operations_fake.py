@@ -24,6 +24,36 @@ class _JArrayFactory:
         return list(_value)
 
 
+class FakeAnalyzer:
+    def __init__(self, name="Demangler", class_name="ghidra.app.analyzers.DemanglerAnalyzer"):
+        self.name = name
+        self.class_name = class_name
+
+    def getName(self):
+        return self.name
+
+    def getClass(self):
+        return SimpleNamespace(getName=lambda: self.class_name)
+
+    def getAnalysisType(self):
+        return "ONE_SHOT"
+
+    def getDefaultEnablement(self, program):
+        return True
+
+    def canAnalyze(self, program):
+        return True
+
+    def isPrototype(self):
+        return False
+
+
+_FAKE_ANALYZERS = [
+    FakeAnalyzer(),
+    FakeAnalyzer("ASCII Strings", "ghidra.app.analyzers.StringsAnalyzer"),
+]
+
+
 def install_ghidra_modules(monkeypatch):
     jpype = types.ModuleType("jpype")
     jpype.JByte = int
@@ -35,21 +65,37 @@ def install_ghidra_modules(monkeypatch):
         "ghidra.program.model": types.ModuleType("ghidra.program.model"),
         "ghidra.program.model.symbol": types.ModuleType("ghidra.program.model.symbol"),
         "ghidra.program.model.listing": types.ModuleType("ghidra.program.model.listing"),
+        "ghidra.program.model.data": types.ModuleType("ghidra.program.model.data"),
         "ghidra.app": types.ModuleType("ghidra.app"),
         "ghidra.app.util": types.ModuleType("ghidra.app.util"),
         "ghidra.app.util.parser": types.ModuleType("ghidra.app.util.parser"),
+        "ghidra.app.services": types.ModuleType("ghidra.app.services"),
         "ghidra.program.disassemble": types.ModuleType("ghidra.program.disassemble"),
         "ghidra.app.script": types.ModuleType("ghidra.app.script"),
         "ghidra.program.util": types.ModuleType("ghidra.program.util"),
         "ghidra.util": types.ModuleType("ghidra.util"),
+        "ghidra.util.classfinder": types.ModuleType("ghidra.util.classfinder"),
         "ghidra.util.task": types.ModuleType("ghidra.util.task"),
         "ghidra.pyghidra": types.ModuleType("ghidra.pyghidra"),
         "ghidra.app.plugin": types.ModuleType("ghidra.app.plugin"),
         "ghidra.app.plugin.core": types.ModuleType("ghidra.app.plugin.core"),
         "ghidra.app.plugin.core.analysis": types.ModuleType("ghidra.app.plugin.core.analysis"),
+        "java": types.ModuleType("java"),
+        "java.io": types.ModuleType("java.io"),
     }
+    modules["java.io"].File = lambda path: path
+    modules["ghidra.app.services"].Analyzer = SimpleNamespace(class_="ghidra.app.services.Analyzer")
+    modules["ghidra.util.classfinder"].ClassSearcher = SimpleNamespace(
+        getInstances=lambda cls: _FAKE_ANALYZERS
+    )
     modules["ghidra.app.script"].GhidraScriptUtil = SimpleNamespace(
         acquireBundleHostReference=lambda: None, releaseBundleHostReference=lambda: None
+    )
+    modules["ghidra.program.model.data"].CategoryPath = lambda path: path
+    modules["ghidra.program.model.data"].BuiltInDataTypeManager = SimpleNamespace(
+        getDataTypeManager=lambda: SimpleNamespace(
+            getDataType=lambda path, name: name if name == "string" else None
+        )
     )
     modules["ghidra.program.util"].GhidraProgramUtilities = SimpleNamespace(
         markProgramAnalyzed=lambda program: None
@@ -86,6 +132,9 @@ class Addr:
 
     def add(self, amount: int):
         return Addr(self.value + amount)
+
+    def subtract(self, amount: int):
+        return Addr(self.value - amount)
 
     def __hash__(self):
         return hash(self.value)
@@ -270,6 +319,12 @@ class Data:
     def getValue(self):
         return self.value
 
+    def hasStringValue(self) -> bool:
+        return False
+
+    def getDefaultValueRepresentation(self):
+        return str(self.value)
+
     def getLength(self):
         return 1
 
@@ -291,14 +346,25 @@ class Listing:
     def clearCodeUnits(self, *args):
         self.cleared = args
 
+    def createData(self, *args):
+        self.created = args
+        return Data()
+
 
 class Block:
     def __init__(self, start=0x1000, payload=b"hello world\x00"):
         self.start = Addr(start)
         self.payload = payload
+        self.source_infos: list[object] = []
 
     def getName(self):
         return ".text"
+
+    def isInitialized(self):
+        return True
+
+    def getSourceInfos(self):
+        return self.source_infos
 
     def getStart(self):
         return self.start
@@ -342,6 +408,52 @@ class Memory:
 
     def setBytes(self, address, array):
         self.written = (address, array)
+
+
+class FakeFileBytes:
+    def __init__(self, filename):
+        self.filename = filename
+
+    def getFilename(self):
+        return self.filename
+
+
+class MappedRange:
+    def __init__(self, start=0x1000, length=14):
+        self.start = Addr(start)
+        self.length = length
+
+    def getMinAddress(self):
+        return self.start
+
+    def getLength(self):
+        return self.length
+
+
+class SourceInfo:
+    def __init__(self, filename="source.bin", offset=0, length=14, start=0x1000):
+        self.file_bytes = FakeFileBytes(filename)
+        self.offset = offset
+        self.length = length
+        self.mapped = MappedRange(start=start, length=length)
+
+    def getFileBytes(self):
+        return self.file_bytes
+
+    def getMappedRange(self):
+        return self.mapped
+
+    def getByteMappingScheme(self):
+        return None
+
+    def getMinAddress(self):
+        return self.mapped.getMinAddress()
+
+    def getLength(self):
+        return self.mapped.getLength()
+
+    def getFileBytesOffset(self, address):
+        return self.offset
 
 
 class SymbolTable:
@@ -402,8 +514,12 @@ class Program:
         self.symbols = SymbolTable()
         self.references = ReferenceManager()
         self.domain = SimpleNamespace(getName=lambda: "hello")
+        self.executable_path = ""
         self.undoes = 0
         self.redoes = 0
+
+    def getExecutablePath(self):
+        return self.executable_path
 
     def parseAddress(self, value, case=True):
         return [] if value == "bad" else [Addr(int(value, 16))]
@@ -536,6 +652,36 @@ def test_operation_reads_and_selectors(monkeypatch):
     assert ops.function_decompile(
         context, program, FunctionDecompileOperation(name="main"), monitor
     ).c_code
+
+
+def test_dispatch_new_operation_branches(monkeypatch):
+    from ryuumonbuchi.worker import dispatch
+
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    monitor = Monitor()
+    calls = []
+    monkeypatch.setattr(
+        ops, "analysis_list_analyzers", lambda *args: calls.append("analyzers") or "a"
+    )
+    monkeypatch.setattr(ops, "set_data_type", lambda *args: calls.append("datatype") or "d")
+    monkeypatch.setattr(ops, "program_export", lambda *args: calls.append("export") or "e")
+    assert (
+        dispatch.execute_operation(None, program, AnalysisListAnalyzersOperation(), monitor) == "a"
+    )
+    assert (
+        dispatch.execute_operation(
+            None, program, SetDataTypeOperation(address="1000", data_type="x"), monitor
+        )
+        == "d"
+    )
+    assert (
+        dispatch.execute_operation(
+            None, program, ProgramExportOperation(destination_path="/tmp/x"), monitor
+        )
+        == "e"
+    )
+    assert calls == ["analyzers", "datatype", "export"]
 
 
 def test_operation_error_and_branch_paths(monkeypatch):
@@ -715,3 +861,271 @@ def test_search_strings_exception_and_full_scan_edges(monkeypatch):
     program.memory = FullMemory()
     result = ops.search_strings(program, SearchStringsOperation(), Monitor())
     assert result.items and result.items[0].length == 4096
+
+
+def test_search_strings_deduplicates_overlapping_runs(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    program.memory = Memory()
+    program.memory.blocks = [Block(payload=b"alpha beta!\x00\x00gap")]
+    result = ops.search_strings(program, SearchStringsOperation(), Monitor())
+    assert [item.value for item in result.items] == ["alpha beta!"]
+    no_match = ops.search_strings(program, SearchStringsOperation(query="absent"), Monitor())
+    assert not no_match.items
+
+    class CancelInner:
+        def __init__(self):
+            self.calls = 0
+
+        def isCancelled(self):
+            self.calls += 1
+            return self.calls > 1
+
+    ops.search_strings(program, SearchStringsOperation(), CancelInner())
+
+
+def test_search_strings_min_length_filters_short_runs(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    program.memory = Memory()
+    program.memory.blocks = [Block(payload=b"alpha beta!\x00\x00gap")]
+    result = ops.search_strings(program, SearchStringsOperation(min_length=4), Monitor())
+    assert [item.value for item in result.items] == ["alpha beta!"]
+    tiny = ops.search_strings(program, SearchStringsOperation(min_length=20), Monitor())
+    assert not tiny.items
+    gap = ops.search_strings(program, SearchStringsOperation(min_length=3), Monitor())
+    assert [item.value for item in gap.items] == ["alpha beta!", "gap"]
+
+
+def _export_program(tmp_path, *, patched=b"XXXX_BBBB_CCCC", original=b"AAAA_BBBB_CCCC"):
+    source = tmp_path / "source.bin"
+    source.write_bytes(original)
+    program = Program()
+    program.executable_path = str(source)
+    block = Block(payload=patched)
+    block.source_infos = [SourceInfo(filename="source.bin", offset=0, length=len(original))]
+    program.memory = Memory()
+    program.memory.blocks = [block]
+    return program
+
+
+def test_optional_value_variants():
+    class Optional:
+        def __init__(self, present, value=None):
+            self.present = present
+            self.value = value
+
+        def isPresent(self):
+            return self.present
+
+        def get(self):
+            return self.value
+
+    assert ops._optional_value(None) is None
+    assert ops._optional_value(Optional(False, "x")) is None
+    assert ops._optional_value(Optional(True, "x")) == "x"
+    assert ops._optional_value("x") == "x"
+
+
+def test_program_export_overlays_patched_blocks(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    destination = tmp_path / "out.bin"
+    result = ops.program_export(
+        program, ProgramExportOperation(destination_path=str(destination)), Monitor()
+    )
+    assert result.bytes_written == 14
+    assert not result.overwritten
+    assert destination.read_bytes() == b"XXXX_BBBB_CCCC"
+
+
+def test_program_export_requires_overwrite_for_existing(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    destination = tmp_path / "out.bin"
+    destination.write_bytes(b"existing")
+    with pytest.raises(ops.OperationError, match="destination already exists"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(destination)), Monitor()
+        )
+    result = ops.program_export(
+        program,
+        ProgramExportOperation(destination_path=str(destination), overwrite=True),
+        Monitor(),
+    )
+    assert result.overwritten
+    assert destination.read_bytes() == b"XXXX_BBBB_CCCC"
+
+
+def test_program_export_requires_original_file(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    program.executable_path = str(tmp_path / "missing.bin")
+    with pytest.raises(ops.OperationError, match="original program file is unavailable"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+        )
+
+
+def test_program_export_skips_foreign_and_non_file_blocks(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    block = program.memory.blocks[0]
+    block.source_infos = [
+        SourceInfo(filename="other.bin", offset=0, length=14),
+        SourceInfo(filename="source.bin", offset=0, length=0),
+    ]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+    )
+    assert (tmp_path / "out.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+
+def test_program_export_uninitialized_block(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+
+    class UninitializedBlock(Block):
+        def isInitialized(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return False
+
+    program.memory.blocks = [UninitializedBlock(payload=b"ignored")]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "skip.bin")), Monitor()
+    )
+    assert (tmp_path / "skip.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+
+def test_program_export_skips_nonidentity_and_rejects_bounds(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    block = program.memory.blocks[0]
+
+    class OptionalNoneSource(SourceInfo):
+        def getFileBytes(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return None  # type: ignore[return-value]
+
+    class NonIdentitySource(SourceInfo):
+        def getByteMappingScheme(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return object()  # type: ignore[return-value]
+
+    block.source_infos = [OptionalNoneSource(), NonIdentitySource()]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+    )
+    assert (tmp_path / "out.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+    class OutOfBoundsSource(SourceInfo):
+        def getFileBytesOffset(self, address):
+            return 1000
+
+    block.source_infos = [OutOfBoundsSource()]
+    with pytest.raises(ops.OperationError, match="file region out of bounds"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(tmp_path / "bad.bin")), Monitor()
+        )
+
+
+def test_program_export_cancelled(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    with pytest.raises(ops.OperationError, match="program export cancelled"):
+        ops.program_export(
+            program,
+            ProgramExportOperation(destination_path=str(tmp_path / "out.bin")),
+            Monitor(cancelled=True),
+        )
+
+
+def test_analysis_list_analyzers_filters_and_pages(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    result = ops.analysis_list_analyzers(program, AnalysisListAnalyzersOperation(), Monitor())
+    assert [item.name for item in result.items] == ["Demangler", "ASCII Strings"]
+    filtered = ops.analysis_list_analyzers(
+        program, AnalysisListAnalyzersOperation(query="strings"), Monitor()
+    )
+    assert [item.name for item in filtered.items] == ["ASCII Strings"]
+    cancelled = ops.analysis_list_analyzers(
+        program, AnalysisListAnalyzersOperation(), Monitor(cancelled=True)
+    )
+    assert not cancelled.items
+
+
+def test_set_data_type_applies_and_rejects_unknown(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+
+    class RejectingManager:
+        def getDataType(self, path, name):
+            return None
+
+    program._dtm = RejectingManager()
+
+    def getDataTypeManager(self):
+        return self._dtm
+
+    Program.getDataTypeManager = getDataTypeManager
+    with pytest.raises(ops.OperationError, match="unknown data type"):
+        ops.set_data_type(
+            program,
+            SetDataTypeOperation(address="1000", data_type="nope"),
+            Monitor(),
+        )
+
+    class AcceptingManager:
+        def getDataType(self, path, name):
+            return name if name == "string" else None
+
+    program._dtm = AcceptingManager()
+    result = ops.set_data_type(
+        program, SetDataTypeOperation(address="1000", data_type="string"), Monitor()
+    )
+    assert result.changed
+    assert program.listing.created[0].value == 0x1000
+    sized = ops.set_data_type(
+        program,
+        SetDataTypeOperation(address="1000", data_type="string", length=16),
+        Monitor(),
+    )
+    assert sized.changed
+    assert program.listing.created[2] == 16
+
+
+def test_search_strings_defined_only(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+
+    class StringData(Data):
+        def hasStringValue(self):
+            return True
+
+    program.listing.data = [
+        Data(0x1000, "x"),
+        StringData(0x1010, "defined string!"),
+        StringData(0x1020, "abc"),
+    ]
+    result = ops.search_strings(program, SearchStringsOperation(defined_only=True), Monitor())
+    assert [item.value for item in result.items] == ["defined string!"]
+    with_query = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True, query="defined"), Monitor()
+    )
+    assert [item.value for item in with_query.items] == ["defined string!"]
+    no_match = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True, query="absent"), Monitor()
+    )
+    assert not no_match.items
+    cancelled = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True), Monitor(cancelled=True)
+    )
+    assert not cancelled.items
+
+    class CancelDefined:
+        def __init__(self):
+            self.calls = 0
+
+        def isCancelled(self):
+            self.calls += 1
+            return self.calls > 2
+
+    ops.search_strings(program, SearchStringsOperation(defined_only=True), CancelDefined())

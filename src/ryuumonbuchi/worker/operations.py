@@ -7,17 +7,21 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, cast
 
 import pyghidra
 
 from ..models import (
     AddressMatch,
+    AnalysisListAnalyzersOperation,
     AnalysisOptionsGetOperation,
     AnalysisOptionsSetOperation,
     AnalysisResult,
     AnalysisRunOperation,
+    AnalyzerSummary,
     ByteSearchOperation,
     CallGraph,
     CallGraphEdge,
@@ -41,6 +45,8 @@ from ..models import (
     MutationResult,
     Page,
     PatchBytesOperation,
+    ProgramExportOperation,
+    ProgramExportResult,
     RedoOperation,
     Reference,
     ReferencesOperation,
@@ -49,6 +55,7 @@ from ..models import (
     SearchStringsOperation,
     SearchSymbolsOperation,
     SetCommentOperation,
+    SetDataTypeOperation,
     SetPrototypeOperation,
     StringMatch,
     SymbolMatch,
@@ -265,6 +272,26 @@ def search_strings(
 ) -> Page[StringMatch]:
     query = operation.query.casefold() if operation.query else None
 
+    if operation.defined_only:
+
+        def defined_values() -> Iterable[StringMatch]:
+            for data in program.getListing().getDefinedData(True):
+                if monitor.isCancelled():
+                    break
+                if not data.hasStringValue():
+                    continue
+                text = str(data.getDefaultValueRepresentation())
+                if len(text) < operation.min_length:
+                    continue
+                if query is None or query in text.casefold():
+                    yield StringMatch(
+                        address=_canonical_address(data.getAddress()),
+                        value=text,
+                        length=len(text),
+                    )
+
+        return _page(defined_values(), operation.offset, operation.page_size)
+
     def values() -> Iterable[StringMatch]:
         for block in program.getMemory().getBlocks():
             if monitor.isCancelled():
@@ -274,6 +301,13 @@ def search_strings(
                 if monitor.isCancelled():
                     break
                 address = block.getStart().add(offset)
+                if offset > 0:
+                    try:
+                        previous = int(program.getMemory().getByte(address.subtract(1))) & 0xFF
+                    except Exception:
+                        previous = 0
+                    if 0x20 <= previous <= 0x7E:
+                        continue
                 chars: list[int] = []
                 for index in range(MAX_CSTRING_BYTES):
                     try:
@@ -283,7 +317,7 @@ def search_strings(
                     if value < 0x20 or value > 0x7E:
                         break
                     chars.append(value)
-                if len(chars) >= 4:
+                if len(chars) >= operation.min_length:
                     text = bytes(chars).decode("ascii")
                     if query is None or query in text.casefold():
                         yield StringMatch(
@@ -488,6 +522,64 @@ def analysis_options_set(
     return {str(name): str(options.getValueAsString(name)) for name in options.getOptionNames()}
 
 
+def analysis_list_analyzers(
+    program: Any, operation: AnalysisListAnalyzersOperation, monitor: Any
+) -> Page[AnalyzerSummary]:
+    from ghidra.app.services import Analyzer  # type: ignore[import-not-found]
+    from ghidra.util.classfinder import ClassSearcher  # type: ignore[import-not-found]
+
+    query = operation.query.casefold() if operation.query else None
+
+    def values() -> Iterable[AnalyzerSummary]:
+        for analyzer in ClassSearcher.getInstances(Analyzer.class_):  # type: ignore[union-attr]
+            if monitor.isCancelled():
+                break
+            name = str(analyzer.getName())
+            analyzer_class = str(analyzer.getClass().getName())
+            if query is not None and (
+                query not in name.casefold() and query not in analyzer_class.casefold()
+            ):
+                continue
+            yield AnalyzerSummary(
+                name=name,
+                analyzer_class=analyzer_class,
+                type=str(analyzer.getAnalysisType()),
+                default_enabled=bool(analyzer.getDefaultEnablement(program)),
+                can_analyze=bool(analyzer.canAnalyze(program)),
+                prototype=bool(analyzer.isPrototype()),
+            )
+
+    return _page(values(), operation.offset, operation.page_size)
+
+
+def set_data_type(program: Any, operation: SetDataTypeOperation, _: Any) -> MutationResult:
+    from ghidra.program.model.data import (  # type: ignore[import-not-found]
+        BuiltInDataTypeManager,
+        CategoryPath,
+    )
+
+    manager = program.getDataTypeManager()
+    data_type = manager.getDataType(CategoryPath("/"), operation.data_type)
+    if data_type is None:
+        data_type = BuiltInDataTypeManager.getDataTypeManager().getDataType(
+            CategoryPath("/"), operation.data_type
+        )
+    if data_type is None:
+        raise OperationError(f"unknown data type: {operation.data_type}")
+    address = _parse_address(program, operation.address)
+    span = operation.length if operation.length is not None else 1
+    program.getListing().clearCodeUnits(address, address.add(span - 1), False)
+    if operation.length is None:
+        program.getListing().createData(address, data_type)
+    else:
+        program.getListing().createData(address, data_type, operation.length)
+    return MutationResult(
+        changed=True,
+        program_name=str(program.getName()),
+        description=f"defined {operation.data_type} at {_canonical_address(address)}",
+    )
+
+
 def rename_function(program: Any, operation: RenameFunctionOperation, _: Any) -> MutationResult:
     from ghidra.program.model.symbol import SourceType
 
@@ -578,6 +670,66 @@ def patch_bytes(program: Any, operation: PatchBytesOperation, _: Any) -> Mutatio
         changed=True,
         program_name=str(program.getDomainFile().getName()),
         description="bytes patched",
+    )
+
+
+def _optional_value(optional: Any) -> Any:
+    """Unwrap a Java Optional regardless of how jpype surfaces it."""
+    if optional is None:
+        return None
+    if hasattr(optional, "isPresent"):
+        return optional.get() if bool(optional.isPresent()) else None
+    return optional
+
+
+def program_export(
+    program: Any, operation: ProgramExportOperation, monitor: Any
+) -> ProgramExportResult:
+    """Overlay the current program image onto a copy of the original file."""
+    import jpype  # type: ignore[import-not-found]
+
+    destination = Path(operation.destination_path).expanduser().resolve()
+    if destination.exists() and not operation.overwrite:
+        raise OperationError(f"destination already exists: {destination}")
+    executable = Path(str(program.getExecutablePath())).expanduser().resolve()
+    if not executable.is_file():
+        message = f"original program file is unavailable: {executable}"
+        raise OperationError(message)
+    image = bytearray(executable.read_bytes())
+    for block in program.getMemory().getBlocks():
+        if monitor.isCancelled():
+            raise OperationError("program export cancelled")
+        if not block.isInitialized():
+            continue
+        for source_info in block.getSourceInfos():
+            file_bytes = _optional_value(source_info.getFileBytes())
+            if file_bytes is None:
+                continue
+            if str(file_bytes.getFilename()) != executable.name:
+                continue
+            if _optional_value(source_info.getByteMappingScheme()) is not None:
+                continue
+            start = source_info.getMinAddress()
+            length = int(source_info.getLength())
+            if length <= 0:
+                continue
+            offset = int(source_info.getFileBytesOffset(start))
+            if offset < 0 or offset + length > len(image):
+                message = f"file region out of bounds for block {block.getName()}"
+                raise OperationError(message)
+            buffer = jpype.JArray(jpype.JByte)(length)  # type: ignore[operator]
+            actual = int(program.getMemory().getBytes(start, buffer))
+            image[offset : offset + actual] = bytes(int(value) & 0xFF for value in buffer[:actual])
+    overwritten = destination.exists()
+    temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
+    temporary.write_bytes(image)
+    temporary.chmod(executable.stat().st_mode & 0o777)
+    temporary.replace(destination)
+    return ProgramExportResult(
+        program_name=str(program.getName()),
+        destination_path=str(destination),
+        bytes_written=len(image),
+        overwritten=overwritten,
     )
 
 

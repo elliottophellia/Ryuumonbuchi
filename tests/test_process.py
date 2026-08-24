@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
-
+# pyright: reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIndexIssue=false
 from __future__ import annotations
 
 import asyncio
@@ -61,6 +61,30 @@ def test_worker_runner_writes_request_and_cleans_success(
     assert runner.active_worker_pid is None
     assert runner.last_worker_pid == 1234
     assert not response_holder["run"].exists()
+
+
+def test_worker_runner_spawn_builds_sanitized_environment(
+    app_config: AppConfig, workspace: SessionWorkspace, tmp_path: Path, monkeypatch
+) -> None:
+    runner = WorkerRunner(app_config, workspace)
+    request = tmp_path / "request.json"
+    response = tmp_path / "response.json"
+    log = tmp_path / "worker.log"
+    captured: dict[str, object] = {}
+
+    class Process:
+        pid = 12
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr("ryuumonbuchi.process.subprocess.Popen", fake_popen)
+    process = runner._spawn(request, response, log)
+    assert process.pid == 12
+    assert captured["args"][1:3] == ["-m", "ryuumonbuchi.worker"]
+    assert captured["kwargs"]["env"]["GHIDRA_INSTALL_DIR"] == str(app_config.ghidra_install_dir)
 
 
 def test_worker_runner_rejects_malformed_response(

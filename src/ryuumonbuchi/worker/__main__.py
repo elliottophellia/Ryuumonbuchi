@@ -21,7 +21,9 @@ from pydantic import ValidationError
 from ..models import (
     BatchOperation,
     ProgramDeleteOperation,
+    ProgramImportBytesOperation,
     ProgramImportOperation,
+    ProgramSaveOperation,
     WorkerError,
     WorkerFailure,
     WorkerOperation,
@@ -94,13 +96,64 @@ def _import_program(context: WorkerContext, operation: ProgramImportOperation) -
             if operation.analyze:
                 pyghidra.analyze(program, pyghidra.task_monitor())
                 analyzed = True
+            language = program.getLanguage()
+            language_id = str(language.getLanguageID())
+            processor = str(language.getProcessor())
             program.save("Imported by Ryuumonbuchi", pyghidra.task_monitor())
     except BaseException:
         if saved_domain_file is not None:
             with suppress(Exception):
                 saved_domain_file.delete()
         raise
-    return {"program_name": operation.program_name, "analyzed": analyzed}
+    return {
+        "program_name": operation.program_name,
+        "analyzed": analyzed,
+        "language_id": language_id,
+        "processor": processor,
+    }
+
+
+def _import_program_bytes(
+    context: WorkerContext, operation: ProgramImportBytesOperation
+) -> dict[str, Any]:
+    import base64
+    import tempfile
+
+    payload = base64.b64decode(operation.data, validate=True)
+    with tempfile.TemporaryDirectory(prefix="ryuumonbuchi-import-") as directory:
+        source = Path(directory) / operation.program_name
+        source.write_bytes(payload)
+        wrapped = ProgramImportOperation(
+            source_path=str(source),
+            program_name=operation.program_name,
+            analyze=operation.analyze,
+        )
+        return _import_program(context, wrapped)
+
+
+def _save_program(
+    context: WorkerContext, request: WorkerRequest, operation: ProgramSaveOperation
+) -> dict[str, Any]:
+    """Write a lossless GZF snapshot of the program to a destination file."""
+    from java.io import File  # type: ignore[import-not-found]
+
+    name = request.program_name
+    if not name:
+        raise OperationError("program_name is required in worker request envelope")
+    destination = Path(operation.destination_path).expanduser().resolve()
+    if destination.exists() and not operation.overwrite:
+        raise OperationError(f"destination already exists: {destination}")
+    temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
+    with context.writable_program(name) as program:
+        program.saveToPackedFile(File(str(temporary)), pyghidra.task_monitor())
+    temporary.chmod(0o600)
+    temporary.replace(destination)
+    return {
+        "program_name": name,
+        "destination_path": str(destination),
+        "bytes_written": destination.stat().st_size,
+        "overwritten": destination.exists() and operation.overwrite,
+    }
 
 
 def _delete_program(context: WorkerContext, operation: ProgramDeleteOperation) -> dict[str, Any]:
@@ -162,17 +215,28 @@ def worker_main(request_path: Path, response_path: Path) -> int:
         lifecycle = [
             operation
             for operation in parsed
-            if isinstance(operation, (ProgramImportOperation, ProgramDeleteOperation))
+            if isinstance(
+                operation,
+                (
+                    ProgramImportOperation,
+                    ProgramImportBytesOperation,
+                    ProgramSaveOperation,
+                    ProgramDeleteOperation,
+                ),
+            )
         ]
         if lifecycle:
             if len(parsed) != 1:
                 raise OperationError("program import/delete cannot be batched")
             operation = lifecycle[0]
-            result = (
-                _import_program(context, operation)
-                if isinstance(operation, ProgramImportOperation)
-                else _delete_program(context, operation)
-            )
+            if isinstance(operation, ProgramImportOperation):
+                result = _import_program(context, operation)
+            elif isinstance(operation, ProgramImportBytesOperation):
+                result = _import_program_bytes(context, operation)
+            elif isinstance(operation, ProgramSaveOperation):
+                result = _save_program(context, request, operation)
+            else:
+                result = _delete_program(context, operation)
         else:
             result = _execute_batch(context, request, parsed)
     except ValidationError as exc:

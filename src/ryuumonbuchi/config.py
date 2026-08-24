@@ -37,6 +37,9 @@ class AppConfig:
     max_heap_mb: int = 1024
     max_cpu: int = 2
     operation_timeout_seconds: int = 900
+    allow_export: bool = True
+    allow_import_bytes: bool = True
+    max_import_bytes: int = 67_108_864
     max_response_bytes: int = 4_194_304
     max_log_tail_bytes: int = 65_536
 
@@ -49,6 +52,7 @@ class AppConfig:
         _validate_limits(self.max_heap_mb, self.max_cpu, self.operation_timeout_seconds)
         _validate_positive_limit("max_response_bytes", self.max_response_bytes)
         _validate_positive_limit("max_log_tail_bytes", self.max_log_tail_bytes)
+        _validate_positive_limit("max_import_bytes", self.max_import_bytes)
 
 
 _DEFAULT_GHIDRA_DIR: Final = Path("/usr/share/ghidra")
@@ -56,6 +60,7 @@ _LIMIT_ENV_NAMES: Final = {
     "max_heap_mb": "RYUUMONBUCHI_MAX_HEAP_MB",
     "max_cpu": "RYUUMONBUCHI_MAX_CPU",
     "operation_timeout_seconds": "RYUUMONBUCHI_OPERATION_TIMEOUT_SECONDS",
+    "max_import_bytes": "RYUUMONBUCHI_MAX_IMPORT_BYTES",
 }
 _VERSION_PATTERN: Final = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?(?:[-+].*)?$")
 
@@ -98,6 +103,34 @@ def _limit_value(
         raise ConfigError(message) from exc
 
 
+_BOOLEAN_ENV_NAMES: Final = {
+    "allow_export": "RYUUMONBUCHI_ALLOW_EXPORT",
+    "allow_import_bytes": "RYUUMONBUCHI_ALLOW_IMPORT_BYTES",
+}
+_FALSE_VALUES: Final = frozenset({"0", "false", "no", "off"})
+
+
+def _boolean_value(
+    name: str,
+    cli_value: bool | None,
+    environ: Mapping[str, str],
+    default: bool,
+) -> bool:
+    if cli_value is not None:
+        return cli_value
+    env_name = _BOOLEAN_ENV_NAMES[name]
+    raw = environ.get(env_name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in _FALSE_VALUES:
+        return False
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    message = f"{env_name} must be a boolean"
+    raise ConfigError(message)
+
+
 def resolve_ghidra_install_dir(
     cli_value: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
@@ -116,6 +149,9 @@ def build_config(
     max_heap_mb: int | None = None,
     max_cpu: int | None = None,
     operation_timeout_seconds: int | None = None,
+    allow_export: bool | None = None,
+    allow_import_bytes: bool | None = None,
+    max_import_bytes: int | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> AppConfig:
     """Build configuration using CLI-over-environment-over-default precedence."""
@@ -128,6 +164,9 @@ def build_config(
         operation_timeout_seconds=_limit_value(
             "operation_timeout_seconds", operation_timeout_seconds, env, 900
         ),
+        allow_export=_boolean_value("allow_export", allow_export, env, True),
+        allow_import_bytes=_boolean_value("allow_import_bytes", allow_import_bytes, env, True),
+        max_import_bytes=_limit_value("max_import_bytes", max_import_bytes, env, 67_108_864),
     )
 
 

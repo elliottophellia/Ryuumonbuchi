@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import json
 import os
@@ -31,7 +32,9 @@ from ryuumonbuchi.server import (
     _guard,
     _program_delete,
     _program_import,
+    _program_import_bytes,
     _program_info_async,
+    _program_save,
     _run_batch,
     _run_program,
 )
@@ -180,6 +183,20 @@ def test_process_validation_timeout_response_size_and_termination_edges(
     monkeypatch.setattr(runner, "_clock", lambda: 0.0)
     asyncio.run(runner._terminate(stopped))
 
+    class Polling:
+        returncode = None
+        calls = 0
+
+        def poll(self):
+            self.calls += 1
+            if self.calls >= 2:
+                self.returncode = 0
+            return self.returncode
+
+    polling = Polling()
+    monkeypatch.setattr(runner, "_clock", lambda: 0.0)
+    asyncio.run(runner._wait(polling, 5.0, "poll", False, tmp_path / "missing.log"))
+
 
 def _state_for_server(app_config: AppConfig, workspace: SessionWorkspace) -> ServerState:
     from ryuumonbuchi.config import GhidraInstallation
@@ -258,6 +275,62 @@ def test_server_program_and_batch_uncertain_transitions(
     monkeypatch.setattr(state.runner, "run", import_uncertain)
     with pytest.raises(SessionError, match="program import"):
         asyncio.run(_program_import(state, str(source), "new", False))
+
+    async def successful(*args, **kwargs):
+        return SimpleNamespace(result={"language_id": "x86:LE:64:default", "processor": "x86"})
+
+    monkeypatch.setattr(state.runner, "run", successful)
+    imported = asyncio.run(_program_import(state, str(source), "new", False))
+    assert imported.analyzed is False
+    imported_bytes = asyncio.run(_program_import_bytes(state, "bytes", "Ynl0ZXM=", b"bytes", True))
+    assert imported_bytes.source_sha256 == hashlib.sha256(b"bytes").hexdigest()
+    saved = asyncio.run(_program_save(state, "new", str(tmp_path / "save.gzf"), False))
+    assert saved.program_name == "new"
+
+    async def non_dict(*args, **kwargs):
+        return SimpleNamespace(result="not-a-dict")
+
+    monkeypatch.setattr(state.runner, "run", non_dict)
+    imported_non_dict = asyncio.run(_program_import(state, str(source), "non_dict", False))
+    assert imported_non_dict.analyzed is False
+    imported_bytes_non_dict = asyncio.run(
+        _program_import_bytes(state, "non_dict_bytes", "Ynl0ZXM=", b"bytes", True)
+    )
+    assert imported_bytes_non_dict.analyzed is True
+
+    async def import_certain(*args, **kwargs):
+        message = "import certain"
+        raise WorkerFailedError(message, request_id="r", uncertain=False)
+
+    monkeypatch.setattr(state.runner, "run", import_certain)
+    with pytest.raises(WorkerFailedError):
+        asyncio.run(_program_import(state, str(source), "certain", False))
+    with pytest.raises(WorkerFailedError):
+        asyncio.run(_program_import_bytes(state, "certain_bytes", "Ynl0ZXM=", b"bytes", False))
+
+    async def import_bytes_uncertain(*args, **kwargs):
+        message = "import bytes uncertain"
+        raise WorkerFailedError(message, request_id="r", uncertain=True)
+
+    monkeypatch.setattr(state.runner, "run", import_bytes_uncertain)
+    with pytest.raises(SessionError, match="program import uncertain"):
+        asyncio.run(_program_import_bytes(state, "uncertain_bytes", "Ynl0ZXM=", b"bytes", False))
+
+    async def save_uncertain(*args, **kwargs):
+        message = "save uncertain"
+        raise WorkerFailedError(message, request_id="r", uncertain=True)
+
+    monkeypatch.setattr(state.runner, "run", save_uncertain)
+    with pytest.raises(SessionError, match="program save"):
+        asyncio.run(_program_save(state, "new", str(tmp_path / "save2.gzf"), False))
+
+    async def save_certain(*args, **kwargs):
+        message = "save certain"
+        raise WorkerFailedError(message, request_id="r", uncertain=False)
+
+    monkeypatch.setattr(state.runner, "run", save_certain)
+    with pytest.raises(WorkerFailedError):
+        asyncio.run(_program_save(state, "new", str(tmp_path / "save3.gzf"), False))
 
     async def delete_uncertain(*args, **kwargs):
         message = "delete"
