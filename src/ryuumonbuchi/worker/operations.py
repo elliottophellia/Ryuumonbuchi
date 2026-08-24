@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, cast
 
 import pyghidra
@@ -41,6 +43,8 @@ from ..models import (
     MutationResult,
     Page,
     PatchBytesOperation,
+    ProgramExportOperation,
+    ProgramExportResult,
     RedoOperation,
     Reference,
     ReferencesOperation,
@@ -585,6 +589,66 @@ def patch_bytes(program: Any, operation: PatchBytesOperation, _: Any) -> Mutatio
         changed=True,
         program_name=str(program.getDomainFile().getName()),
         description="bytes patched",
+    )
+
+
+def _optional_value(optional: Any) -> Any:
+    """Unwrap a Java Optional regardless of how jpype surfaces it."""
+    if optional is None:
+        return None
+    if hasattr(optional, "isPresent"):
+        return optional.get() if bool(optional.isPresent()) else None
+    return optional
+
+
+def program_export(
+    program: Any, operation: ProgramExportOperation, monitor: Any
+) -> ProgramExportResult:
+    """Overlay the current program image onto a copy of the original file."""
+    import jpype  # type: ignore[import-not-found]
+
+    destination = Path(operation.destination_path).expanduser().resolve()
+    if destination.exists() and not operation.overwrite:
+        raise OperationError(f"destination already exists: {destination}")
+    executable = Path(str(program.getExecutablePath())).expanduser().resolve()
+    if not executable.is_file():
+        message = f"original program file is unavailable: {executable}"
+        raise OperationError(message)
+    image = bytearray(executable.read_bytes())
+    for block in program.getMemory().getBlocks():
+        if monitor.isCancelled():
+            raise OperationError("program export cancelled")
+        if not block.isInitialized():
+            continue
+        for source_info in block.getSourceInfos():
+            file_bytes = _optional_value(source_info.getFileBytes())
+            if file_bytes is None:
+                continue
+            if str(file_bytes.getFilename()) != executable.name:
+                continue
+            if _optional_value(source_info.getByteMappingScheme()) is not None:
+                continue
+            start = source_info.getMinAddress()
+            length = int(source_info.getLength())
+            if length <= 0:
+                continue
+            offset = int(source_info.getFileBytesOffset(start))
+            if offset < 0 or offset + length > len(image):
+                message = f"file region out of bounds for block {block.getName()}"
+                raise OperationError(message)
+            buffer = jpype.JArray(jpype.JByte)(length)  # type: ignore[operator]
+            actual = int(program.getMemory().getBytes(start, buffer))
+            image[offset : offset + actual] = bytes(int(value) & 0xFF for value in buffer[:actual])
+    overwritten = destination.exists()
+    temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
+    temporary.write_bytes(image)
+    temporary.chmod(executable.stat().st_mode & 0o777)
+    temporary.replace(destination)
+    return ProgramExportResult(
+        program_name=str(program.getName()),
+        destination_path=str(destination),
+        bytes_written=len(image),
+        overwritten=overwritten,
     )
 
 

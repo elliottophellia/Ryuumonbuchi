@@ -57,6 +57,8 @@ from .models import (
     Page,
     PatchBytesOperation,
     ProgramDeleteResult,
+    ProgramExportOperation,
+    ProgramExportResult,
     ProgramImportResult,
     ProgramInfo,
     ProgramListResult,
@@ -299,6 +301,35 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         """Delete exactly one imported root-level program."""
 
         return await _guard(_program_delete(_state(ctx), program_name))
+
+    @mcp.tool()
+    async def program_export(
+        program_name: str,
+        destination_path: str,
+        overwrite: bool = False,
+        *,
+        ctx: Context[ServerState, Any],
+    ) -> ProgramExportResult:
+        """Write the current program bytes, including patches, to a destination file.
+
+        The original imported file is copied and every initialized file-backed
+        memory block is overlaid at its source file offset, so edits made with
+        edit_patch_bytes are reflected in the exported image. Disabled when
+        RYUUMONBUCHI_ALLOW_EXPORT is set to a false value.
+        """
+
+        state = _state(ctx)
+        if not state.config.allow_export:
+            raise _raise_tool("export_disabled", "program export is disabled by configuration")
+        result = await _guard(
+            _run_program(
+                state,
+                program_name,
+                ProgramExportOperation(destination_path=destination_path, overwrite=overwrite),
+                read_only=False,
+            )
+        )
+        return ProgramExportResult.model_validate(result)
 
     @mcp.tool()
     async def program_list(ctx: Context[ServerState, Any]) -> ProgramListResult:

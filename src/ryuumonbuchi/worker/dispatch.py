@@ -27,6 +27,7 @@ from ..models import (
     MemoryBlocksOperation,
     MemoryReadOperation,
     PatchBytesOperation,
+    ProgramExportOperation,
     ReferencesOperation,
     RenameFunctionOperation,
     RenameVariableOperation,
@@ -107,6 +108,8 @@ def execute_operation(
         return operations.set_prototype(program, operation, monitor)
     if isinstance(operation, PatchBytesOperation):
         return operations.patch_bytes(program, operation, monitor)
+    if isinstance(operation, ProgramExportOperation):
+        return operations.program_export(program, operation, monitor)
     if isinstance(operation, UndoOperation):
         return operations.undo(program, operation, monitor)
     return operations.redo(program, operation, monitor)

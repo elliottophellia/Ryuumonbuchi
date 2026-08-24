@@ -415,6 +415,19 @@ class ProgramDeleteOperation(WireModel):
     program_name: ProgramName
 
 
+class ProgramExportOperation(WireModel):
+    action: Literal["program_export"] = "program_export"
+    destination_path: str = Field(min_length=1, max_length=4096)
+    overwrite: bool = False
+
+
+class ProgramExportResult(WireModel):
+    program_name: str
+    destination_path: str
+    bytes_written: int = Field(ge=0)
+    overwritten: bool = False
+
+
 type BatchOperation = Annotated[
     FunctionListOperation
     | FunctionGetOperation
@@ -439,6 +452,7 @@ type BatchOperation = Annotated[
     | SetCommentOperation
     | SetPrototypeOperation
     | PatchBytesOperation
+    | ProgramExportOperation
     | UndoOperation
     | RedoOperation,
     Field(discriminator="action"),

@@ -299,9 +299,16 @@ class Block:
     def __init__(self, start=0x1000, payload=b"hello world\x00"):
         self.start = Addr(start)
         self.payload = payload
+        self.source_infos: list[object] = []
 
     def getName(self):
         return ".text"
+
+    def isInitialized(self):
+        return True
+
+    def getSourceInfos(self):
+        return self.source_infos
 
     def getStart(self):
         return self.start
@@ -345,6 +352,52 @@ class Memory:
 
     def setBytes(self, address, array):
         self.written = (address, array)
+
+
+class FakeFileBytes:
+    def __init__(self, filename):
+        self.filename = filename
+
+    def getFilename(self):
+        return self.filename
+
+
+class MappedRange:
+    def __init__(self, start=0x1000, length=14):
+        self.start = Addr(start)
+        self.length = length
+
+    def getMinAddress(self):
+        return self.start
+
+    def getLength(self):
+        return self.length
+
+
+class SourceInfo:
+    def __init__(self, filename="source.bin", offset=0, length=14, start=0x1000):
+        self.file_bytes = FakeFileBytes(filename)
+        self.offset = offset
+        self.length = length
+        self.mapped = MappedRange(start=start, length=length)
+
+    def getFileBytes(self):
+        return self.file_bytes
+
+    def getMappedRange(self):
+        return self.mapped
+
+    def getByteMappingScheme(self):
+        return None
+
+    def getMinAddress(self):
+        return self.mapped.getMinAddress()
+
+    def getLength(self):
+        return self.mapped.getLength()
+
+    def getFileBytesOffset(self, address):
+        return self.offset
 
 
 class SymbolTable:
@@ -405,8 +458,12 @@ class Program:
         self.symbols = SymbolTable()
         self.references = ReferenceManager()
         self.domain = SimpleNamespace(getName=lambda: "hello")
+        self.executable_path = ""
         self.undoes = 0
         self.redoes = 0
+
+    def getExecutablePath(self):
+        return self.executable_path
 
     def parseAddress(self, value, case=True):
         return [] if value == "bad" else [Addr(int(value, 16))]
@@ -740,3 +797,80 @@ def test_search_strings_min_length_filters_short_runs(monkeypatch):
     assert not tiny.items
     gap = ops.search_strings(program, SearchStringsOperation(min_length=3), Monitor())
     assert [item.value for item in gap.items] == ["alpha beta!", "gap"]
+
+
+def _export_program(tmp_path, *, patched=b"XXXX_BBBB_CCCC", original=b"AAAA_BBBB_CCCC"):
+    source = tmp_path / "source.bin"
+    source.write_bytes(original)
+    program = Program()
+    program.executable_path = str(source)
+    block = Block(payload=patched)
+    block.source_infos = [SourceInfo(filename="source.bin", offset=0, length=len(original))]
+    program.memory = Memory()
+    program.memory.blocks = [block]
+    return program
+
+
+def test_program_export_overlays_patched_blocks(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    destination = tmp_path / "out.bin"
+    result = ops.program_export(
+        program, ProgramExportOperation(destination_path=str(destination)), Monitor()
+    )
+    assert result.bytes_written == 14
+    assert not result.overwritten
+    assert destination.read_bytes() == b"XXXX_BBBB_CCCC"
+
+
+def test_program_export_requires_overwrite_for_existing(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    destination = tmp_path / "out.bin"
+    destination.write_bytes(b"existing")
+    with pytest.raises(ops.OperationError, match="destination already exists"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(destination)), Monitor()
+        )
+    result = ops.program_export(
+        program,
+        ProgramExportOperation(destination_path=str(destination), overwrite=True),
+        Monitor(),
+    )
+    assert result.overwritten
+    assert destination.read_bytes() == b"XXXX_BBBB_CCCC"
+
+
+def test_program_export_requires_original_file(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    program.executable_path = str(tmp_path / "missing.bin")
+    with pytest.raises(ops.OperationError, match="original program file is unavailable"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+        )
+
+
+def test_program_export_skips_foreign_and_non_file_blocks(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    block = program.memory.blocks[0]
+    block.source_infos = [
+        SourceInfo(filename="other.bin", offset=0, length=14),
+        SourceInfo(filename="source.bin", offset=0, length=0),
+    ]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+    )
+    assert (tmp_path / "out.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+
+def test_program_export_cancelled(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    with pytest.raises(ops.OperationError, match="program export cancelled"):
+        ops.program_export(
+            program,
+            ProgramExportOperation(destination_path=str(tmp_path / "out.bin")),
+            Monitor(cancelled=True),
+        )

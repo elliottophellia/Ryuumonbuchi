@@ -232,3 +232,25 @@ def test_selector_schema_enforcement_missing_tool() -> None:
     mcp._tool_manager = manager
     with pytest.raises(RuntimeError, match="selector tool not registered"):
         _enforce_selector_schemas(mcp)
+
+
+def test_program_export_disabled_by_config() -> None:
+    config = AppConfig(
+        Path("/usr/share/ghidra"),
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
+        allow_export=False,
+    )
+    server = create_server(config)
+
+    async def run() -> None:
+        async with Client(server, raise_exceptions=False) as client:
+            result = await client.call_tool(
+                "program_export",
+                {"program_name": "hello", "destination_path": "/tmp/out.bin"},
+            )
+        assert result.is_error
+        assert "export_disabled" in str(result)
+
+    asyncio.run(run())
