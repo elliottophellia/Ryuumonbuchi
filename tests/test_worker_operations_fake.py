@@ -316,6 +316,12 @@ class Data:
     def getValue(self):
         return self.value
 
+    def hasStringValue(self) -> bool:
+        return False
+
+    def getDefaultValueRepresentation(self):
+        return str(self.value)
+
     def getLength(self):
         return 1
 
@@ -976,3 +982,28 @@ def test_set_data_type_applies_and_rejects_unknown(monkeypatch):
     )
     assert sized.changed
     assert program.listing.created[2] == 16
+
+
+def test_search_strings_defined_only(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+
+    class StringData(Data):
+        def hasStringValue(self):
+            return True
+
+    program.listing.data = [
+        Data(0x1000, "x"),
+        StringData(0x1010, "defined string!"),
+        StringData(0x1020, "abc"),
+    ]
+    result = ops.search_strings(program, SearchStringsOperation(defined_only=True), Monitor())
+    assert [item.value for item in result.items] == ["defined string!"]
+    with_query = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True, query="defined"), Monitor()
+    )
+    assert [item.value for item in with_query.items] == ["defined string!"]
+    cancelled = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True), Monitor(cancelled=True)
+    )
+    assert not cancelled.items

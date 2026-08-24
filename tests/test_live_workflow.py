@@ -52,7 +52,6 @@ def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
             assert not patched.is_error, patched
             assert patched.structured_content["changed"] is True
 
-
             analyzers = await client.call_tool(
                 "analysis_list_analyzers", {"program_name": "print_flag"}
             )

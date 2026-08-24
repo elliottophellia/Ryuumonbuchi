@@ -316,6 +316,7 @@ class SearchStringsOperation(WireModel):
     action: Literal["search_strings"] = "search_strings"
     query: str | None = None
     min_length: MinStringLength = 4
+    defined_only: bool = False
     offset: Offset = 0
     page_size: PageSize = 100
 

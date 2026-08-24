@@ -519,6 +519,7 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         program_name: str,
         query: str | None = None,
         min_length: int = 4,
+        defined_only: bool = False,
         offset: int = 0,
         page_size: int = 100,
         *,
@@ -528,6 +529,8 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
 
         Matches are maximal printable runs: overlapping substrings are
         deduplicated and only runs of at least min_length bytes are returned.
+        When defined_only is set, only strings defined as data by analysis
+        are returned.
         """
 
         result = await _guard(
@@ -535,7 +538,11 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
                 _state(ctx),
                 program_name,
                 SearchStringsOperation(
-                    query=query, min_length=min_length, offset=offset, page_size=page_size
+                    query=query,
+                    min_length=min_length,
+                    defined_only=defined_only,
+                    offset=offset,
+                    page_size=page_size,
                 ),
                 read_only=True,
             )

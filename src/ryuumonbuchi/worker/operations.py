@@ -272,6 +272,26 @@ def search_strings(
 ) -> Page[StringMatch]:
     query = operation.query.casefold() if operation.query else None
 
+    if operation.defined_only:
+
+        def defined_values() -> Iterable[StringMatch]:
+            for data in program.getListing().getDefinedData(True):
+                if monitor.isCancelled():
+                    break
+                if not data.hasStringValue():
+                    continue
+                text = str(data.getDefaultValueRepresentation())
+                if len(text) < operation.min_length:
+                    continue
+                if query is None or query in text.casefold():
+                    yield StringMatch(
+                        address=_canonical_address(data.getAddress()),
+                        value=text,
+                        length=len(text),
+                    )
+
+        return _page(defined_values(), operation.offset, operation.page_size)
+
     def values() -> Iterable[StringMatch]:
         for block in program.getMemory().getBlocks():
             if monitor.isCancelled():
