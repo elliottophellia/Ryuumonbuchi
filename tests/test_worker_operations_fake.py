@@ -24,6 +24,36 @@ class _JArrayFactory:
         return list(_value)
 
 
+class FakeAnalyzer:
+    def __init__(self, name="Demangler", class_name="ghidra.app.analyzers.DemanglerAnalyzer"):
+        self.name = name
+        self.class_name = class_name
+
+    def getName(self):
+        return self.name
+
+    def getClass(self):
+        return SimpleNamespace(getName=lambda: self.class_name)
+
+    def getAnalysisType(self):
+        return "ONE_SHOT"
+
+    def getDefaultEnablement(self, program):
+        return True
+
+    def canAnalyze(self, program):
+        return True
+
+    def isPrototype(self):
+        return False
+
+
+_FAKE_ANALYZERS = [
+    FakeAnalyzer(),
+    FakeAnalyzer("ASCII Strings", "ghidra.app.analyzers.StringsAnalyzer"),
+]
+
+
 def install_ghidra_modules(monkeypatch):
     jpype = types.ModuleType("jpype")
     jpype.JByte = int
@@ -35,21 +65,34 @@ def install_ghidra_modules(monkeypatch):
         "ghidra.program.model": types.ModuleType("ghidra.program.model"),
         "ghidra.program.model.symbol": types.ModuleType("ghidra.program.model.symbol"),
         "ghidra.program.model.listing": types.ModuleType("ghidra.program.model.listing"),
+        "ghidra.program.model.data": types.ModuleType("ghidra.program.model.data"),
         "ghidra.app": types.ModuleType("ghidra.app"),
         "ghidra.app.util": types.ModuleType("ghidra.app.util"),
         "ghidra.app.util.parser": types.ModuleType("ghidra.app.util.parser"),
+        "ghidra.app.services": types.ModuleType("ghidra.app.services"),
         "ghidra.program.disassemble": types.ModuleType("ghidra.program.disassemble"),
         "ghidra.app.script": types.ModuleType("ghidra.app.script"),
         "ghidra.program.util": types.ModuleType("ghidra.program.util"),
         "ghidra.util": types.ModuleType("ghidra.util"),
+        "ghidra.util.classfinder": types.ModuleType("ghidra.util.classfinder"),
         "ghidra.util.task": types.ModuleType("ghidra.util.task"),
         "ghidra.pyghidra": types.ModuleType("ghidra.pyghidra"),
         "ghidra.app.plugin": types.ModuleType("ghidra.app.plugin"),
         "ghidra.app.plugin.core": types.ModuleType("ghidra.app.plugin.core"),
         "ghidra.app.plugin.core.analysis": types.ModuleType("ghidra.app.plugin.core.analysis"),
     }
+    modules["ghidra.app.services"].Analyzer = SimpleNamespace(class_="ghidra.app.services.Analyzer")
+    modules["ghidra.util.classfinder"].ClassSearcher = SimpleNamespace(
+        getInstances=lambda cls: _FAKE_ANALYZERS
+    )
     modules["ghidra.app.script"].GhidraScriptUtil = SimpleNamespace(
         acquireBundleHostReference=lambda: None, releaseBundleHostReference=lambda: None
+    )
+    modules["ghidra.program.model.data"].CategoryPath = lambda path: path
+    modules["ghidra.program.model.data"].BuiltInDataTypeManager = SimpleNamespace(
+        getDataTypeManager=lambda: SimpleNamespace(
+            getDataType=lambda path, name: name if name == "string" else None
+        )
     )
     modules["ghidra.program.util"].GhidraProgramUtilities = SimpleNamespace(
         markProgramAnalyzed=lambda program: None
@@ -293,6 +336,10 @@ class Listing:
 
     def clearCodeUnits(self, *args):
         self.cleared = args
+
+    def createData(self, *args):
+        self.created = args
+        return Data()
 
 
 class Block:
@@ -874,3 +921,58 @@ def test_program_export_cancelled(tmp_path, monkeypatch):
             ProgramExportOperation(destination_path=str(tmp_path / "out.bin")),
             Monitor(cancelled=True),
         )
+
+
+def test_analysis_list_analyzers_filters_and_pages(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    result = ops.analysis_list_analyzers(program, AnalysisListAnalyzersOperation(), Monitor())
+    assert [item.name for item in result.items] == ["Demangler", "ASCII Strings"]
+    filtered = ops.analysis_list_analyzers(
+        program, AnalysisListAnalyzersOperation(query="strings"), Monitor()
+    )
+    assert [item.name for item in filtered.items] == ["ASCII Strings"]
+    cancelled = ops.analysis_list_analyzers(
+        program, AnalysisListAnalyzersOperation(), Monitor(cancelled=True)
+    )
+    assert not cancelled.items
+
+
+def test_set_data_type_applies_and_rejects_unknown(monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+
+    class RejectingManager:
+        def getDataType(self, path, name):
+            return None
+
+    program._dtm = RejectingManager()
+
+    def getDataTypeManager(self):
+        return self._dtm
+
+    Program.getDataTypeManager = getDataTypeManager
+    with pytest.raises(ops.OperationError, match="unknown data type"):
+        ops.set_data_type(
+            program,
+            SetDataTypeOperation(address="1000", data_type="nope"),
+            Monitor(),
+        )
+
+    class AcceptingManager:
+        def getDataType(self, path, name):
+            return name if name == "string" else None
+
+    program._dtm = AcceptingManager()
+    result = ops.set_data_type(
+        program, SetDataTypeOperation(address="1000", data_type="string"), Monitor()
+    )
+    assert result.changed
+    assert program.listing.created[0].value == 0x1000
+    sized = ops.set_data_type(
+        program,
+        SetDataTypeOperation(address="1000", data_type="string", length=16),
+        Monitor(),
+    )
+    assert sized.changed
+    assert program.listing.created[2] == 16

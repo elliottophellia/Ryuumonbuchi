@@ -52,6 +52,25 @@ def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
             assert not patched.is_error, patched
             assert patched.structured_content["changed"] is True
 
+
+            analyzers = await client.call_tool(
+                "analysis_list_analyzers", {"program_name": "print_flag"}
+            )
+            assert not analyzers.is_error, analyzers
+            assert analyzers.structured_content["items"], analyzers
+
+            defined = await client.call_tool(
+                "edit_set_data_type",
+                {
+                    "program_name": "print_flag",
+                    "address": "00102010",
+                    "data_type": "string",
+                    "length": 16,
+                },
+            )
+            assert not defined.is_error, defined
+            assert defined.structured_content["changed"] is True
+
             destination = tmp_path / "patched_flag"
             exported = await client.call_tool(
                 "program_export",

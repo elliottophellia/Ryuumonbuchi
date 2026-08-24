@@ -96,6 +96,7 @@ def test_complete_catalog_handlers_with_fake_worker(
             "edit_rename_function",
             "edit_rename_variable",
             "edit_set_comment",
+            "edit_set_data_type",
             "edit_set_prototype",
             "edit_patch_bytes",
             "edit_undo",
@@ -140,6 +141,7 @@ def test_complete_catalog_handlers_with_fake_worker(
                 ("text_search", {"program_name": "hello", "query": "hello"}),
                 ("analysis_run", {"program_name": "hello"}),
                 ("analysis_options_get", {"program_name": "hello"}),
+                ("analysis_list_analyzers", {"program_name": "hello"}),
                 ("program_info", {"program_name": "hello"}),
             ]
             for name, arguments in read_calls:
@@ -159,6 +161,10 @@ def test_complete_catalog_handlers_with_fake_worker(
                         "old_name": "x",
                         "new_name": "y",
                     },
+                ),
+                (
+                    "edit_set_data_type",
+                    {"program_name": "hello", "address": "1000", "data_type": "dword"},
                 ),
                 ("edit_set_comment", {"program_name": "hello", "address": "1000", "comment": "x"}),
                 (

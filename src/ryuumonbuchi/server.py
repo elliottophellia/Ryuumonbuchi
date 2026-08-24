@@ -26,11 +26,13 @@ from .config import AppConfig, GhidraInstallation, current_python_version, valid
 from .models import (
     READ_ACTIONS,
     AddressMatch,
+    AnalysisListAnalyzersOperation,
     AnalysisOptions,
     AnalysisOptionsGetOperation,
     AnalysisOptionsSetOperation,
     AnalysisResult,
     AnalysisRunOperation,
+    AnalyzerSummary,
     BatchOperation,
     BatchResult,
     ByteSearchOperation,
@@ -74,6 +76,7 @@ from .models import (
     SessionClearResult,
     SessionStatus,
     SetCommentOperation,
+    SetDataTypeOperation,
     SetPrototypeOperation,
     StringMatch,
     SymbolMatch,
@@ -740,6 +743,27 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         return AnalysisOptions(values=result)
 
     @mcp.tool()
+    async def analysis_list_analyzers(
+        program_name: str,
+        query: str | None = None,
+        offset: int = 0,
+        page_size: int = 100,
+        *,
+        ctx: Context[ServerState, Any],
+    ) -> Page[AnalyzerSummary]:
+        """List bounded analysis engine analyzers."""
+
+        result = await _guard(
+            _run_program(
+                _state(ctx),
+                program_name,
+                AnalysisListAnalyzersOperation(query=query, offset=offset, page_size=page_size),
+                read_only=True,
+            )
+        )
+        return Page[AnalyzerSummary].model_validate(result)
+
+    @mcp.tool()
     async def edit_rename_function(
         program_name: str,
         address: str | None = None,
@@ -799,6 +823,27 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
                 _state(ctx),
                 program_name,
                 SetCommentOperation(address=address, comment=comment, comment_type=comment_type),
+                read_only=False,
+            )
+        )
+        return MutationResult.model_validate(result)
+
+    @mcp.tool()
+    async def edit_set_data_type(
+        program_name: str,
+        address: str,
+        data_type: str,
+        length: int | None = None,
+        *,
+        ctx: Context[ServerState, Any],
+    ) -> MutationResult:
+        """Define one data type at an address."""
+
+        result = await _guard(
+            _run_program(
+                _state(ctx),
+                program_name,
+                SetDataTypeOperation(address=address, data_type=data_type, length=length),
                 read_only=False,
             )
         )

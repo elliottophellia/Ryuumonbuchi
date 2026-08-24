@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 
 from ..models import (
     READ_ACTIONS,
+    AnalysisListAnalyzersOperation,
     AnalysisOptionsGetOperation,
     AnalysisOptionsSetOperation,
     AnalysisRunOperation,
@@ -34,6 +35,7 @@ from ..models import (
     SearchStringsOperation,
     SearchSymbolsOperation,
     SetCommentOperation,
+    SetDataTypeOperation,
     SetPrototypeOperation,
     TextSearchOperation,
     UndoOperation,
@@ -96,6 +98,8 @@ def execute_operation(
         return operations.analysis_run(program, operation, monitor)
     if isinstance(operation, AnalysisOptionsGetOperation):
         return operations.analysis_options_get(program, operation, monitor)
+    if isinstance(operation, AnalysisListAnalyzersOperation):
+        return operations.analysis_list_analyzers(program, operation, monitor)
     if isinstance(operation, AnalysisOptionsSetOperation):
         return operations.analysis_options_set(program, operation, monitor)
     if isinstance(operation, RenameFunctionOperation):
@@ -104,6 +108,8 @@ def execute_operation(
         return operations.rename_variable(program, operation, monitor)
     if isinstance(operation, SetCommentOperation):
         return operations.set_comment(program, operation, monitor)
+    if isinstance(operation, SetDataTypeOperation):
+        return operations.set_data_type(program, operation, monitor)
     if isinstance(operation, SetPrototypeOperation):
         return operations.set_prototype(program, operation, monitor)
     if isinstance(operation, PatchBytesOperation):

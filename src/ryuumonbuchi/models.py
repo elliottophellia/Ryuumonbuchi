@@ -221,6 +221,29 @@ class AnalysisOptions(WireModel):
     values: dict[str, bool | int | float | str]
 
 
+class AnalyzerSummary(WireModel):
+    name: str
+    analyzer_class: str
+    type: str
+    default_enabled: bool
+    can_analyze: bool
+    prototype: bool = False
+
+
+class AnalysisListAnalyzersOperation(WireModel):
+    action: Literal["analysis_list_analyzers"] = "analysis_list_analyzers"
+    query: str | None = None
+    offset: Offset = 0
+    page_size: PageSize = 100
+
+
+class SetDataTypeOperation(WireModel):
+    action: Literal["edit_set_data_type"] = "edit_set_data_type"
+    address: str
+    data_type: str = Field(min_length=1, max_length=256)
+    length: int | None = Field(default=None, ge=1, le=1_048_576)
+
+
 class MutationResult(WireModel):
     changed: bool
     program_name: str
@@ -458,9 +481,11 @@ type BatchOperation = Annotated[
     | AnalysisRunOperation
     | AnalysisOptionsGetOperation
     | AnalysisOptionsSetOperation
+    | AnalysisListAnalyzersOperation
     | RenameFunctionOperation
     | RenameVariableOperation
     | SetCommentOperation
+    | SetDataTypeOperation
     | SetPrototypeOperation
     | PatchBytesOperation
     | ProgramExportOperation
@@ -491,6 +516,7 @@ READ_ACTIONS = frozenset(
         "byte_search",
         "text_search",
         "analysis_options_get",
+        "analysis_list_analyzers",
     }
 )
 

@@ -16,10 +16,12 @@ import pyghidra
 
 from ..models import (
     AddressMatch,
+    AnalysisListAnalyzersOperation,
     AnalysisOptionsGetOperation,
     AnalysisOptionsSetOperation,
     AnalysisResult,
     AnalysisRunOperation,
+    AnalyzerSummary,
     ByteSearchOperation,
     CallGraph,
     CallGraphEdge,
@@ -53,6 +55,7 @@ from ..models import (
     SearchStringsOperation,
     SearchSymbolsOperation,
     SetCommentOperation,
+    SetDataTypeOperation,
     SetPrototypeOperation,
     StringMatch,
     SymbolMatch,
@@ -497,6 +500,64 @@ def analysis_options_set(
             else:
                 options.setString(name, value)
     return {str(name): str(options.getValueAsString(name)) for name in options.getOptionNames()}
+
+
+def analysis_list_analyzers(
+    program: Any, operation: AnalysisListAnalyzersOperation, monitor: Any
+) -> Page[AnalyzerSummary]:
+    from ghidra.app.services import Analyzer  # type: ignore[import-not-found]
+    from ghidra.util.classfinder import ClassSearcher  # type: ignore[import-not-found]
+
+    query = operation.query.casefold() if operation.query else None
+
+    def values() -> Iterable[AnalyzerSummary]:
+        for analyzer in ClassSearcher.getInstances(Analyzer.class_):  # type: ignore[union-attr]
+            if monitor.isCancelled():
+                break
+            name = str(analyzer.getName())
+            analyzer_class = str(analyzer.getClass().getName())
+            if query is not None and (
+                query not in name.casefold() and query not in analyzer_class.casefold()
+            ):
+                continue
+            yield AnalyzerSummary(
+                name=name,
+                analyzer_class=analyzer_class,
+                type=str(analyzer.getAnalysisType()),
+                default_enabled=bool(analyzer.getDefaultEnablement(program)),
+                can_analyze=bool(analyzer.canAnalyze(program)),
+                prototype=bool(analyzer.isPrototype()),
+            )
+
+    return _page(values(), operation.offset, operation.page_size)
+
+
+def set_data_type(program: Any, operation: SetDataTypeOperation, _: Any) -> MutationResult:
+    from ghidra.program.model.data import (  # type: ignore[import-not-found]
+        BuiltInDataTypeManager,
+        CategoryPath,
+    )
+
+    manager = program.getDataTypeManager()
+    data_type = manager.getDataType(CategoryPath("/"), operation.data_type)
+    if data_type is None:
+        data_type = BuiltInDataTypeManager.getDataTypeManager().getDataType(
+            CategoryPath("/"), operation.data_type
+        )
+    if data_type is None:
+        raise OperationError(f"unknown data type: {operation.data_type}")
+    address = _parse_address(program, operation.address)
+    span = operation.length if operation.length is not None else 1
+    program.getListing().clearCodeUnits(address, address.add(span - 1), False)
+    if operation.length is None:
+        program.getListing().createData(address, data_type)
+    else:
+        program.getListing().createData(address, data_type, operation.length)
+    return MutationResult(
+        changed=True,
+        program_name=str(program.getName()),
+        description=f"defined {operation.data_type} at {_canonical_address(address)}",
+    )
 
 
 def rename_function(program: Any, operation: RenameFunctionOperation, _: Any) -> MutationResult:
