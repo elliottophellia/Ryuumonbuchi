@@ -3,23 +3,24 @@
 
 """MCP server factory, lifespan state, and finite typed tool catalog."""
 
-# pyright: reportUnusedFunction=false, reportDeprecated=false
+# pyright: reportUnusedFunction=false, reportDeprecated=false, reportPrivateUsage=false
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, Never, TypeVar
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import __version__
 from .config import AppConfig, GhidraInstallation, current_python_version, validate_config
@@ -106,31 +107,75 @@ from .session import (
 T = TypeVar("T", bound=BaseModel)
 
 
+class _WorkerImportResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    program_name: str
+    analyzed: bool
+    language_id: str
+    processor: str
+
+
+class _WorkerSaveResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    program_name: str
+    destination_path: str
+    bytes_written: int = Field(ge=0)
+    overwritten: bool
+
+
+class _WorkerDeleteResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    program_name: str
+    deleted: Literal[True]
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionState:
+    workspace: SessionWorkspace
+    runner: WorkerRunner
+
+
 @dataclass(slots=True)
 class ServerState:
     """Mutable process state scoped to one MCP lifespan."""
 
     config: AppConfig
     installation: GhidraInstallation
-    workspace: SessionWorkspace
-    runner: WorkerRunner
+    session: _SessionState
+    session_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @classmethod
     def create(cls, config: AppConfig, installation: GhidraInstallation) -> ServerState:
         workspace = SessionWorkspace.create(installation.version)
-        return cls(config, installation, workspace, WorkerRunner(config, workspace))
+        return cls(config, installation, _SessionState(workspace, WorkerRunner(config, workspace)))
+
+    async def _replace_session_locked(self) -> tuple[str, str]:
+        """Install a replacement before closing the old workspace.
+
+        The caller must hold ``session_lock`` and must not hold a workspace lock.
+        """
+
+        old = self.session
+        replacement_workspace = SessionWorkspace.create(
+            self.installation.version, temp_dir=old.workspace.root.parent
+        )
+        replacement = _SessionState(
+            replacement_workspace, WorkerRunner(self.config, replacement_workspace)
+        )
+        self.session = replacement
+        await old.workspace.close()
+        return old.workspace.session_id, replacement_workspace.session_id
 
     async def clear_session(self) -> tuple[str, str]:
-        old = self.workspace
-        old_id = old.session_id
-        await old.close()
-        new = SessionWorkspace.create(self.installation.version, temp_dir=old.root.parent)
-        self.workspace = new
-        self.runner = WorkerRunner(self.config, new)
-        return old_id, new.session_id
+        async with self.session_lock:
+            return await self._replace_session_locked()
 
     async def close(self) -> None:
-        await self.workspace.close()
+        async with self.session_lock:
+            await self.session.workspace.close()
 
 
 @asynccontextmanager
@@ -180,6 +225,17 @@ async def _guard(awaitable: Awaitable[T]) -> T:
         raise _raise_tool("invalid_params", str(exc)) from exc
 
 
+async def _raise_worker_failure_locked(
+    state: ServerState, exc: WorkerRunError, operation: str
+) -> Never:
+    """Replace uncertain state while ``session_lock`` is held, without a workspace lock."""
+
+    if not exc.uncertain:
+        raise exc
+    _old_id, new_id = await state._replace_session_locked()
+    raise SessionError(f"{operation} uncertain; replacement session created: {new_id}") from exc
+
+
 async def _run_program(
     state: ServerState,
     program_name: str,
@@ -189,43 +245,39 @@ async def _run_program(
     timeout_seconds: int | None = None,
 ) -> Any:
     name = validate_program_name(program_name)
-    state.workspace.require_program(name)
     raw = operation.model_dump(mode="json")
-    try:
-        async with state.workspace.operation():
-            call = await state.runner.run(
-                [raw], read_only=read_only, timeout_seconds=timeout_seconds, program_name=name
-            )
+    async with state.session_lock:
+        session = state.session
+        session.workspace.require_program(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run(
+                    [raw], read_only=read_only, timeout_seconds=timeout_seconds, program_name=name
+                )
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "worker state was")
         return call.result
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            raise SessionError(
-                f"worker state was uncertain; replacement session created: {new_id}"
-            ) from exc
-        raise
 
 
 async def _run_batch(
     state: ServerState, program_name: str, operations: tuple[BatchOperation, ...]
 ) -> Any:
     name = validate_program_name(program_name)
-    state.workspace.require_program(name)
     if not 1 <= len(operations) <= 32:
         raise ValueError("batch operations must contain 1..32 items")
     raw_operations = [operation.model_dump(mode="json") for operation in operations]
     read_only = all(operation.action in READ_ACTIONS for operation in operations)
-    try:
-        async with state.workspace.operation():
-            call = await state.runner.run(raw_operations, read_only=read_only, program_name=name)
+    async with state.session_lock:
+        session = state.session
+        session.workspace.require_program(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run(
+                    raw_operations, read_only=read_only, program_name=name
+                )
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "worker state was")
         return call.result
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            raise SessionError(
-                f"worker state was uncertain; replacement session created: {new_id}"
-            ) from exc
-        raise
 
 
 def _program_info(record: ProgramRecord, version: str) -> ProgramInfo:
@@ -257,6 +309,7 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         """Return configuration and session health without starting a worker."""
 
         state = _state(ctx)
+        session = state.session
         return HealthResult(
             package_version=__version__,
             python_version=current_python_version(),
@@ -267,8 +320,8 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
             operation_timeout_seconds=state.config.operation_timeout_seconds,
             max_response_bytes=state.config.max_response_bytes,
             max_log_tail_bytes=state.config.max_log_tail_bytes,
-            session_id=state.workspace.session_id,
-            tracked_program_count=len(state.workspace.read_manifest().programs),
+            session_id=session.workspace.session_id,
+            tracked_program_count=len(session.workspace.read_manifest().programs),
         )
 
     @mcp.tool()
@@ -276,13 +329,14 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         """Return session ownership and worker lifecycle state."""
 
         state = _state(ctx)
-        manifest = state.workspace.read_manifest()
+        session = state.session
+        manifest = session.workspace.read_manifest()
         return SessionStatus(
             session_id=manifest.session_id,
             root_created_at=datetime.fromisoformat(manifest.created_at),
             programs=list(manifest.programs),
-            active_worker_pid=state.runner.active_worker_pid,
-            last_worker_pid=state.runner.last_worker_pid,
+            active_worker_pid=session.runner.active_worker_pid,
+            last_worker_pid=session.runner.last_worker_pid,
         )
 
     @mcp.tool()
@@ -354,11 +408,12 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         state = _state(ctx)
         if not state.config.allow_export:
             raise _raise_tool("export_disabled", "program export is disabled by configuration")
+        canonical_destination = str(Path(destination_path).expanduser().resolve())
         result = await _guard(
             _run_program(
                 state,
                 program_name,
-                ProgramExportOperation(destination_path=destination_path, overwrite=overwrite),
+                ProgramExportOperation(destination_path=canonical_destination, overwrite=overwrite),
                 read_only=False,
             )
         )
@@ -390,12 +445,15 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         """List imported programs from the authoritative manifest without a worker."""
 
         state = _state(ctx)
-        return ProgramListResult(
-            programs=[
-                _program_info(record, state.installation.version)
-                for record in state.workspace.read_manifest().programs.values()
-            ]
-        )
+        async with state.session_lock:
+            session = state.session
+            manifest = session.workspace.read_manifest()
+            return ProgramListResult(
+                programs=[
+                    _program_info(record, state.installation.version)
+                    for record in manifest.programs.values()
+                ]
+            )
 
     @mcp.tool()
     async def program_info(program_name: str, *, ctx: Context[ServerState, Any]) -> ProgramInfo:
@@ -985,7 +1043,9 @@ def _enforce_selector_schemas(mcp: MCPServer[ServerState]) -> None:
 
 async def _program_info_async(state: ServerState, program_name: str) -> ProgramInfo:
     name = validate_program_name(program_name)
-    return _program_info(state.workspace.require_program(name), state.installation.version)
+    async with state.session_lock:
+        session = state.session
+        return _program_info(session.workspace.require_program(name), state.installation.version)
 
 
 async def _program_import(
@@ -994,36 +1054,42 @@ async def _program_import(
     name = validate_program_name(program_name)
     source = Path(source_path).expanduser().resolve()
     source_hash = stream_sha256(source)
-    state.workspace.ensure_program_absent(name)
     raw = {
         "action": "program_import",
         "source_path": str(source),
         "program_name": name,
         "analyze": analyze,
     }
-    worker_result: dict[str, Any] = {}
-    try:
-        async with state.workspace.operation():
-            call = await state.runner.run([raw], read_only=False, program_name=name)
-            if isinstance(call.result, dict):
-                worker_result = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            message = f"program import uncertain; replacement session created: {new_id}"
-            raise SessionError(message) from exc
-        raise
-    state.workspace.update_program(
-        ProgramRecord(
-            name,
-            str(source),
-            source_hash,
-            datetime.now(UTC).isoformat(),
-            analyze,
-            language_id=worker_result.get("language_id"),
-            processor=worker_result.get("processor"),
-        )
-    )
+    async with state.session_lock:
+        session = state.session
+        session.workspace.ensure_program_absent(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run([raw], read_only=False, program_name=name)
+                try:
+                    worker_result = _WorkerImportResult.model_validate(call.result)
+                    if worker_result.program_name != name:
+                        raise ValueError("program_name mismatch")
+                    if worker_result.analyzed is not analyze:
+                        raise ValueError("analyzed mismatch")
+                except (ValidationError, ValueError) as exc:
+                    message = f"worker returned invalid program import result: {call.request_id}"
+                    raise WorkerFailedError(
+                        message, request_id=call.request_id, uncertain=True
+                    ) from exc
+                session.workspace.update_program(
+                    ProgramRecord(
+                        name,
+                        str(source),
+                        source_hash,
+                        datetime.now(UTC).isoformat(),
+                        analyze,
+                        language_id=worker_result.language_id,
+                        processor=worker_result.processor,
+                    )
+                )
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "program import")
     return ProgramImportResult(
         program_name=name,
         source_sha256=source_hash,
@@ -1041,36 +1107,42 @@ async def _program_import_bytes(
 ) -> ProgramImportResult:
     name = validate_program_name(program_name)
     source_hash = hashlib.sha256(payload).hexdigest()
-    state.workspace.ensure_program_absent(name)
     raw = {
         "action": "program_import_bytes",
         "data": data,
         "program_name": name,
         "analyze": analyze,
     }
-    worker_result: dict[str, Any] = {}
-    try:
-        async with state.workspace.operation():
-            call = await state.runner.run([raw], read_only=False, program_name=name)
-            if isinstance(call.result, dict):
-                worker_result = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            message = f"program import uncertain; replacement session created: {new_id}"
-            raise SessionError(message) from exc
-        raise
-    state.workspace.update_program(
-        ProgramRecord(
-            name,
-            f"bytes:{source_hash}",
-            source_hash,
-            datetime.now(UTC).isoformat(),
-            analyze,
-            language_id=worker_result.get("language_id"),
-            processor=worker_result.get("processor"),
-        )
-    )
+    async with state.session_lock:
+        session = state.session
+        session.workspace.ensure_program_absent(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run([raw], read_only=False, program_name=name)
+                try:
+                    worker_result = _WorkerImportResult.model_validate(call.result)
+                    if worker_result.program_name != name:
+                        raise ValueError("program_name mismatch")
+                    if worker_result.analyzed is not analyze:
+                        raise ValueError("analyzed mismatch")
+                except (ValidationError, ValueError) as exc:
+                    message = f"worker returned invalid program import result: {call.request_id}"
+                    raise WorkerFailedError(
+                        message, request_id=call.request_id, uncertain=True
+                    ) from exc
+                session.workspace.update_program(
+                    ProgramRecord(
+                        name,
+                        f"bytes:{source_hash}",
+                        source_hash,
+                        datetime.now(UTC).isoformat(),
+                        analyze,
+                        language_id=worker_result.language_id,
+                        processor=worker_result.processor,
+                    )
+                )
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "program import")
     return ProgramImportResult(
         program_name=name,
         source_sha256=source_hash,
@@ -1083,45 +1155,63 @@ async def _program_save(
     state: ServerState, program_name: str, destination_path: str, overwrite: bool
 ) -> ProgramSaveResult:
     name = validate_program_name(program_name)
-    state.workspace.require_program(name)
+    canonical_destination = str(Path(destination_path).expanduser().resolve())
     raw = {
         "action": "program_save",
-        "destination_path": destination_path,
+        "destination_path": canonical_destination,
         "overwrite": overwrite,
     }
-    try:
-        async with state.workspace.operation():
-            call = await state.runner.run([raw], read_only=False, program_name=name)
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            message = f"program save uncertain; replacement session created: {new_id}"
-            raise SessionError(message) from exc
-        raise
-    result: dict[str, Any] = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
+    async with state.session_lock:
+        session = state.session
+        session.workspace.require_program(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run([raw], read_only=False, program_name=name)
+                try:
+                    worker_result = _WorkerSaveResult.model_validate(call.result)
+                    if worker_result.program_name != name:
+                        raise ValueError("program_name mismatch")
+                    if worker_result.destination_path != canonical_destination:
+                        raise ValueError("destination_path mismatch")
+                except (ValidationError, ValueError) as exc:
+                    message = f"worker returned invalid program save result: {call.request_id}"
+                    raise WorkerFailedError(
+                        message, request_id=call.request_id, uncertain=True
+                    ) from exc
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "program save")
     return ProgramSaveResult(
-        program_name=name,
-        destination_path=str(result.get("destination_path", destination_path)),
-        bytes_written=int(result.get("bytes_written", 0)),
-        overwritten=bool(result.get("overwritten", False)),
+        program_name=worker_result.program_name,
+        destination_path=worker_result.destination_path,
+        bytes_written=worker_result.bytes_written,
+        overwritten=worker_result.overwritten,
     )
 
 
 async def _program_delete(state: ServerState, program_name: str) -> ProgramDeleteResult:
     name = validate_program_name(program_name)
-    state.workspace.require_program(name)
     raw = {"action": "program_delete", "program_name": name}
-    try:
-        async with state.workspace.operation():
-            await state.runner.run([raw], read_only=False, program_name=name)
-    except WorkerRunError as exc:
-        if exc.uncertain:
-            new_id = await state.clear_session()
-            message = f"program deletion uncertain; replacement session created: {new_id}"
-            raise SessionError(message) from exc
-        raise
-    state.workspace.remove_program(name)
-    return ProgramDeleteResult(program_name=name)
+    async with state.session_lock:
+        session = state.session
+        session.workspace.require_program(name)
+        try:
+            async with session.workspace.operation():
+                call = await session.runner.run([raw], read_only=False, program_name=name)
+                try:
+                    worker_result = _WorkerDeleteResult.model_validate(call.result)
+                    if worker_result.program_name != name:
+                        raise ValueError("program_name mismatch")
+                except (ValidationError, ValueError) as exc:
+                    message = f"worker returned invalid program deletion result: {call.request_id}"
+                    raise WorkerFailedError(
+                        message, request_id=call.request_id, uncertain=True
+                    ) from exc
+                session.workspace.remove_program(name)
+        except WorkerRunError as exc:
+            await _raise_worker_failure_locked(state, exc, "program deletion")
+    return ProgramDeleteResult(
+        program_name=worker_result.program_name, deleted=worker_result.deleted
+    )
 
 
 def main(config: AppConfig) -> None:

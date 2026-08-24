@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterable
 from pathlib import Path
@@ -722,15 +723,21 @@ def program_export(
             image[offset : offset + actual] = bytes(int(value) & 0xFF for value in buffer[:actual])
     overwritten = destination.exists()
     temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
-    temporary.write_bytes(image)
-    temporary.chmod(executable.stat().st_mode & 0o777)
-    temporary.replace(destination)
-    return ProgramExportResult(
-        program_name=str(program.getName()),
-        destination_path=str(destination),
-        bytes_written=len(image),
-        overwritten=overwritten,
-    )
+    try:
+        temporary.write_bytes(image)
+        temporary.chmod(executable.stat().st_mode & 0o777)
+        temporary.replace(destination)
+        return ProgramExportResult(
+            program_name=str(program.getName()),
+            destination_path=str(destination),
+            bytes_written=len(image),
+            overwritten=overwritten,
+        )
+    except OSError as exc:
+        raise OperationError(f"cannot write destination: {destination}: {exc}") from exc
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
 
 
 def undo(program: Any, operation: UndoOperation, _: Any) -> MutationResult:

@@ -101,25 +101,25 @@ class WorkerRunner:
                 uncertain=not read_only,
             )
         run_dir.mkdir(mode=0o700)
-        request_path = run_dir / "request.json"
-        response_path = run_dir / "response.json"
-        log_path = run_dir / "worker.log"
-        request = WorkerRequest(
-            request_id=request_id,
-            session_id=self.workspace.session_id,
-            project_dir=str(self.workspace.project_dir.resolve()),
-            project_name=PROJECT_NAME,
-            ghidra_install_dir=str(self.config.ghidra_install_dir),
-            max_heap_mb=self.config.max_heap_mb,
-            max_cpu=self.config.max_cpu,
-            max_response_bytes=self.config.max_response_bytes,
-            read_only=read_only,
-            program_name=program_name,
-            operations=operations,
-        )
-        self._write_json(request_path, request.model_dump(mode="json", by_alias=True))
         process: subprocess.Popen[bytes] | None = None
         try:
+            request_path = run_dir / "request.json"
+            response_path = run_dir / "response.json"
+            log_path = run_dir / "worker.log"
+            request = WorkerRequest(
+                request_id=request_id,
+                session_id=self.workspace.session_id,
+                project_dir=str(self.workspace.project_dir.resolve()),
+                project_name=PROJECT_NAME,
+                ghidra_install_dir=str(self.config.ghidra_install_dir),
+                max_heap_mb=self.config.max_heap_mb,
+                max_cpu=self.config.max_cpu,
+                max_response_bytes=self.config.max_response_bytes,
+                read_only=read_only,
+                program_name=program_name,
+                operations=operations,
+            )
+            self._write_json(request_path, request.model_dump(mode="json", by_alias=True))
             process = self._spawn(request_path, response_path, log_path)
             self.last_worker_pid = process.pid
             self.active_worker_pid = process.pid
@@ -143,11 +143,15 @@ class WorkerRunner:
             except WorkerTimeoutError:
                 await self._terminate(process)
                 raise
-            return self._read_response(response_path, request_id, read_only, log_path, run_dir)
+            return self._read_response(response_path, request_id, read_only, log_path)
         finally:
             self.active_worker_pid = None
-            if process is not None and process.poll() is None:
-                await self._terminate(process)
+            try:
+                if process is not None and process.poll() is None:
+                    await self._terminate(process)
+            finally:
+                with contextlib.suppress(OSError):
+                    shutil.rmtree(run_dir)
 
     def _spawn(
         self,
@@ -214,7 +218,6 @@ class WorkerRunner:
         request_id: str,
         read_only: bool,
         log_path: Path,
-        run_dir: Path,
     ) -> WorkerCall:
         try:
             if not response_path.is_file():
@@ -241,14 +244,12 @@ class WorkerRunner:
                 if response.request_id != request_id:
                     message = "response request ID mismatch"
                     raise ValueError(message)
-                shutil.rmtree(run_dir)
                 return WorkerCall(request_id, response.result)
             if payload_dict.get("ok") is False:
                 response = WorkerFailure.model_validate(payload_dict)
                 if response.request_id != request_id:
                     message = "response request ID mismatch"
                     raise ValueError(message)
-                shutil.rmtree(run_dir)
                 raise WorkerOperationError(
                     response.error.code,
                     response.error.message,

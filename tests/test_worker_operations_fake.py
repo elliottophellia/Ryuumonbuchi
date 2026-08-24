@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 import types
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1035,6 +1036,20 @@ def test_program_export_cancelled(tmp_path, monkeypatch):
             ProgramExportOperation(destination_path=str(tmp_path / "out.bin")),
             Monitor(cancelled=True),
         )
+
+
+def test_program_export_write_failure_cleans_temporary(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    destination = tmp_path / "failure.bin"
+    monkeypatch.setattr(
+        Path, "replace", lambda self, target: (_ for _ in ()).throw(OSError("replace"))
+    )
+    with pytest.raises(ops.OperationError, match="cannot write destination"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(destination)), Monitor()
+        )
+    assert not list(tmp_path.glob("failure.bin.tmp*"))
 
 
 def test_analysis_list_analyzers_filters_and_pages(monkeypatch):

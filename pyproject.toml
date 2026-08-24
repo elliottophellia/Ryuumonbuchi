@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "ryuumonbuchi"
 version = "0.2.0"
-description = "A headless Ghidra MCP server with one-shot worker isolation."
+description = "maybe the headless ghidra mcp you are looking for"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "GPL-2.0-only"

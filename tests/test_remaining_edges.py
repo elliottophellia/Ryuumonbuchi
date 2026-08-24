@@ -21,6 +21,7 @@ from ryuumonbuchi import config as cfg
 from ryuumonbuchi.config import AppConfig
 from ryuumonbuchi.models import FunctionGetOperation, PatchBytesOperation
 from ryuumonbuchi.process import (
+    WorkerCall,
     WorkerCancelledError,
     WorkerFailedError,
     WorkerOperationError,
@@ -49,7 +50,6 @@ from ryuumonbuchi.session import (
     SessionError,
     SessionWorkspace,
     stream_sha256,
-    validate_workspace_path,
 )
 
 
@@ -75,6 +75,7 @@ def test_model_hex_validator_rejects_non_hex() -> None:
 def test_session_manifest_object_duplicate_and_cleanup_edges(tmp_path: Path, monkeypatch) -> None:
     workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path)
     try:
+        valid_time = workspace.created_at.isoformat()
         workspace.manifest_path.write_text("[]", encoding="utf-8")
         with pytest.raises(SessionError, match="object"):
             workspace.read_manifest()
@@ -82,13 +83,13 @@ def test_session_manifest_object_duplicate_and_cleanup_edges(tmp_path: Path, mon
             "program_name": "hello",
             "source_path": "source",
             "source_sha256": "hash",
-            "imported_at": "now",
+            "imported_at": valid_time,
             "analyzed": False,
         }
         payload = {
             "schema": 1,
             "session_id": workspace.session_id,
-            "created_at": "now",
+            "created_at": valid_time,
             "ghidra_version": "12.0.4",
             "programs": [record, record],
         }
@@ -100,12 +101,9 @@ def test_session_manifest_object_duplicate_and_cleanup_edges(tmp_path: Path, mon
         )
         with pytest.raises(SessionError, match="invalid record"):
             workspace.read_manifest()
-        with pytest.raises(SessionError, match="outside"):
-            validate_workspace_path(workspace.root, workspace)
-        assert validate_workspace_path(workspace.project_dir, workspace) == workspace.project_dir
-        monkeypatch.setattr(os, "name", "nt")
         from ryuumonbuchi import session as session_module
 
+        monkeypatch.setattr(os, "name", "nt")
         with pytest.raises(SessionError, match="POSIX"):
             session_module._lock_exclusive(workspace._lock_file)
     finally:
@@ -164,7 +162,7 @@ def test_process_validation_timeout_response_size_and_termination_edges(
     )
     small_runner = WorkerRunner(small_config, workspace)
     with pytest.raises(WorkerFailedError, match="malformed"):
-        small_runner._read_response(response, "r", True, tmp_path / "missing.log", tmp_path)
+        small_runner._read_response(response, "r", True, tmp_path / "missing.log")
 
     class StopsOnTerm:
         pid = 101
@@ -201,9 +199,14 @@ def test_process_validation_timeout_response_size_and_termination_edges(
 def _state_for_server(app_config: AppConfig, workspace: SessionWorkspace) -> ServerState:
     from ryuumonbuchi.config import GhidraInstallation
     from ryuumonbuchi.process import WorkerRunner
+    from ryuumonbuchi.server import _SessionState
 
     installation = GhidraInstallation(app_config.ghidra_install_dir, "12.0.4", 21, ("3.13",))
-    return ServerState(app_config, installation, workspace, WorkerRunner(app_config, workspace))
+    return ServerState(
+        app_config,
+        installation,
+        _SessionState(workspace, WorkerRunner(app_config, workspace)),
+    )
 
 
 def test_server_guard_maps_all_domain_errors() -> None:
@@ -236,17 +239,17 @@ def test_server_program_and_batch_uncertain_transitions(
         )
     )
 
-    async def clear_session(self):
+    async def replace(self):
         return "old", "new"
 
-    monkeypatch.setattr(ServerState, "clear_session", clear_session)
+    monkeypatch.setattr(ServerState, "_replace_session_locked", replace)
     operation = FunctionGetOperation(name="main")
 
     async def uncertain(*args, **kwargs):
         message = "uncertain"
         raise WorkerFailedError(message, request_id="r", uncertain=True)
 
-    monkeypatch.setattr(state.runner, "run", uncertain)
+    monkeypatch.setattr(state.session.runner, "run", uncertain)
     with pytest.raises(SessionError, match="replacement"):
         asyncio.run(_run_program(state, "hello", operation, read_only=True))
     with pytest.raises(SessionError, match="replacement"):
@@ -258,7 +261,7 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "certain"
         raise WorkerFailedError(message, request_id="r", uncertain=False)
 
-    monkeypatch.setattr(state.runner, "run", certain)
+    monkeypatch.setattr(state.session.runner, "run", certain)
     with pytest.raises(WorkerFailedError):
         asyncio.run(_run_program(state, "hello", operation, read_only=True))
     with pytest.raises(WorkerFailedError):
@@ -272,14 +275,34 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "import"
         raise WorkerFailedError(message, request_id="r", uncertain=True)
 
-    monkeypatch.setattr(state.runner, "run", import_uncertain)
+    monkeypatch.setattr(state.session.runner, "run", import_uncertain)
     with pytest.raises(SessionError, match="program import"):
         asyncio.run(_program_import(state, str(source), "new", False))
 
-    async def successful(*args, **kwargs):
-        return SimpleNamespace(result={"language_id": "x86:LE:64:default", "processor": "x86"})
+    async def successful(operations, **kwargs):
+        action = operations[0]["action"]
+        name = str(kwargs["program_name"])
+        if action in {"program_import", "program_import_bytes"}:
+            return WorkerCall(
+                "r",
+                {
+                    "program_name": name,
+                    "analyzed": operations[0]["analyze"],
+                    "language_id": "x86:LE:64:default",
+                    "processor": "x86",
+                },
+            )
+        return WorkerCall(
+            "r",
+            {
+                "program_name": name,
+                "destination_path": operations[0]["destination_path"],
+                "bytes_written": 0,
+                "overwritten": False,
+            },
+        )
 
-    monkeypatch.setattr(state.runner, "run", successful)
+    monkeypatch.setattr(state.session.runner, "run", successful)
     imported = asyncio.run(_program_import(state, str(source), "new", False))
     assert imported.analyzed is False
     imported_bytes = asyncio.run(_program_import_bytes(state, "bytes", "Ynl0ZXM=", b"bytes", True))
@@ -287,22 +310,18 @@ def test_server_program_and_batch_uncertain_transitions(
     saved = asyncio.run(_program_save(state, "new", str(tmp_path / "save.gzf"), False))
     assert saved.program_name == "new"
 
-    async def non_dict(*args, **kwargs):
-        return SimpleNamespace(result="not-a-dict")
+    async def malformed(*args, **kwargs):
+        return WorkerCall("r", "not-a-dict")
 
-    monkeypatch.setattr(state.runner, "run", non_dict)
-    imported_non_dict = asyncio.run(_program_import(state, str(source), "non_dict", False))
-    assert imported_non_dict.analyzed is False
-    imported_bytes_non_dict = asyncio.run(
-        _program_import_bytes(state, "non_dict_bytes", "Ynl0ZXM=", b"bytes", True)
-    )
-    assert imported_bytes_non_dict.analyzed is True
+    monkeypatch.setattr(state.session.runner, "run", malformed)
+    with pytest.raises(SessionError, match="replacement"):
+        asyncio.run(_program_import(state, str(source), "malformed", False))
 
     async def import_certain(*args, **kwargs):
         message = "import certain"
         raise WorkerFailedError(message, request_id="r", uncertain=False)
 
-    monkeypatch.setattr(state.runner, "run", import_certain)
+    monkeypatch.setattr(state.session.runner, "run", import_certain)
     with pytest.raises(WorkerFailedError):
         asyncio.run(_program_import(state, str(source), "certain", False))
     with pytest.raises(WorkerFailedError):
@@ -312,7 +331,7 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "import bytes uncertain"
         raise WorkerFailedError(message, request_id="r", uncertain=True)
 
-    monkeypatch.setattr(state.runner, "run", import_bytes_uncertain)
+    monkeypatch.setattr(state.session.runner, "run", import_bytes_uncertain)
     with pytest.raises(SessionError, match="program import uncertain"):
         asyncio.run(_program_import_bytes(state, "uncertain_bytes", "Ynl0ZXM=", b"bytes", False))
 
@@ -320,7 +339,7 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "save uncertain"
         raise WorkerFailedError(message, request_id="r", uncertain=True)
 
-    monkeypatch.setattr(state.runner, "run", save_uncertain)
+    monkeypatch.setattr(state.session.runner, "run", save_uncertain)
     with pytest.raises(SessionError, match="program save"):
         asyncio.run(_program_save(state, "new", str(tmp_path / "save2.gzf"), False))
 
@@ -328,7 +347,7 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "save certain"
         raise WorkerFailedError(message, request_id="r", uncertain=False)
 
-    monkeypatch.setattr(state.runner, "run", save_certain)
+    monkeypatch.setattr(state.session.runner, "run", save_certain)
     with pytest.raises(WorkerFailedError):
         asyncio.run(_program_save(state, "new", str(tmp_path / "save3.gzf"), False))
 
@@ -336,7 +355,7 @@ def test_server_program_and_batch_uncertain_transitions(
         message = "delete"
         raise WorkerFailedError(message, request_id="r", uncertain=True)
 
-    monkeypatch.setattr(state.runner, "run", delete_uncertain)
+    monkeypatch.setattr(state.session.runner, "run", delete_uncertain)
     with pytest.raises(SessionError, match="program deletion"):
         asyncio.run(_program_delete(state, "hello"))
 
@@ -424,7 +443,7 @@ def test_server_program_certain_worker_failures(
         message = "certain"
         raise WorkerFailedError(message, request_id="request", uncertain=False)
 
-    monkeypatch.setattr(state.runner, "run", certain)
+    monkeypatch.setattr(state.session.runner, "run", certain)
     with pytest.raises(WorkerFailedError):
         asyncio.run(_program_import(state, str(source), "new", False))
     with pytest.raises(WorkerFailedError):
@@ -474,9 +493,17 @@ def test_session_create_properties_lock_and_permission_edges(tmp_path: Path, mon
         payload = {
             "schema": 1,
             "session_id": workspace.session_id,
-            "created_at": "now",
+            "created_at": workspace.created_at.isoformat(),
             "ghidra_version": "12.0.4",
-            "programs": [{"program_name": "hello"}],
+            "programs": [
+                {
+                    "program_name": "hello",
+                    "source_path": "source",
+                    "source_sha256": "hash",
+                    "imported_at": workspace.created_at.isoformat(),
+                    "analyzed": False,
+                }
+            ],
         }
         workspace.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
         monkeypatch.setattr(session_module, "validate_program_name", fail_name)

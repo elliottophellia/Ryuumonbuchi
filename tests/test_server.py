@@ -114,8 +114,13 @@ def test_complete_catalog_handlers_with_fake_worker(
             result = MutationResult(
                 changed=True, program_name=program_name or "hello", description=action
             ).model_dump()
-        elif action == "program_import":
-            result = {"program_name": "imported", "analyzed": True}
+        elif action in {"program_import", "program_import_bytes"}:
+            result = {
+                "program_name": program_name or str(operations[0]["program_name"]),
+                "analyzed": bool(operations[0].get("analyze", True)),
+                "language_id": "x86:LE:64:default",
+                "processor": "x86",
+            }
         elif action == "program_delete":
             result = {"program_name": str(operations[0]["program_name"]), "deleted": True}
         else:
@@ -245,37 +250,40 @@ def test_server_import_and_save_success_paths(tmp_path, monkeypatch):
     workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path / "ws")
     try:
         installation = GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",))
-        state = ServerState(
-            AppConfig(
-                Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
-            ),
-            installation,
-            workspace,
-            WorkerRunner(
-                AppConfig(
-                    Path("/usr/share/ghidra"),
-                    max_heap_mb=256,
-                    max_cpu=1,
-                    operation_timeout_seconds=30,
-                ),
-                workspace,
-            ),
+        config = AppConfig(
+            Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
         )
+        from ryuumonbuchi.server import _SessionState
+
+        runner = WorkerRunner(config, workspace)
+        state = ServerState(config, installation, _SessionState(workspace, runner))
 
         async def fake_run(operations, **kwargs):
             action = operations[0]["action"]
+            requested_name = str(kwargs.get("program_name") or operations[0].get("program_name"))
             if action == "program_save":
                 return WorkerCall(
                     "r",
                     {
+                        "program_name": requested_name,
                         "destination_path": operations[0]["destination_path"],
                         "bytes_written": 4,
                         "overwritten": False,
                     },
                 )
-            return WorkerCall("r", {"language_id": "x86:LE:64:default", "processor": "x86"})
+            if action in {"program_import", "program_import_bytes"}:
+                return WorkerCall(
+                    "r",
+                    {
+                        "program_name": requested_name,
+                        "analyzed": operations[0]["analyze"],
+                        "language_id": "x86:LE:64:default",
+                        "processor": "x86",
+                    },
+                )
+            return WorkerCall("r", {"program_name": requested_name, "deleted": True})
 
-        monkeypatch.setattr(state.runner, "run", fake_run)
+        monkeypatch.setattr(state.session.runner, "run", fake_run)
         imported = asyncio.run(_program_import(state, str(source), "source", True))
         assert imported.source_sha256 == stream_sha256(source)
         saved = asyncio.run(_program_save(state, "source", str(tmp_path / "snap.gzf"), False))
@@ -288,7 +296,7 @@ def test_server_import_and_save_success_paths(tmp_path, monkeypatch):
             message = "certain"
             raise WorkerFailedError(message, request_id="r", uncertain=False)
 
-        monkeypatch.setattr(state.runner, "run", certain)
+        monkeypatch.setattr(state.session.runner, "run", certain)
         with pytest.raises(WorkerFailedError):
             asyncio.run(_program_import(state, str(source), "certain", False))
         with pytest.raises(WorkerFailedError):
@@ -310,15 +318,17 @@ def test_server_save_uncertain_transition(tmp_path, monkeypatch):
         )
         installation = GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",))
         runner = WorkerRunner(config, workspace)
-        state = ServerState(config, installation, workspace, runner)
+        from ryuumonbuchi.server import _SessionState
+
+        state = ServerState(config, installation, _SessionState(workspace, runner))
         workspace.update_program(
             ProgramRecord("hello", "source", "hash", workspace.created_at.isoformat(), False)
         )
 
-        async def clear_session(self):
+        async def replace(self):
             return "old", "new"
 
-        monkeypatch.setattr(ServerState, "clear_session", clear_session)
+        monkeypatch.setattr(ServerState, "_replace_session_locked", replace)
 
         async def uncertain(*args, **kwargs):
             message = "save"
@@ -444,3 +454,151 @@ def test_program_import_bytes_disabled_by_config() -> None:
         assert "import_bytes_disabled" in str(result)
 
     asyncio.run(run())
+
+
+def test_server_rejects_malformed_lifecycle_results(tmp_path: Path, monkeypatch) -> None:
+    from ryuumonbuchi.config import GhidraInstallation
+    from ryuumonbuchi.process import WorkerCall
+    from ryuumonbuchi.server import (
+        ServerState,
+        _program_delete,
+        _program_import,
+        _program_import_bytes,
+        _program_save,
+        _SessionState,
+    )
+
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"source")
+    workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path / "workspace")
+    config = AppConfig(
+        Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+    )
+    state = ServerState(
+        config,
+        GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",)),
+        _SessionState(workspace, WorkerRunner(config, workspace)),
+    )
+    workspace.update_program(
+        ProgramRecord("hello", "source", "hash", workspace.created_at.isoformat(), False)
+    )
+    replacements: list[tuple[str, str]] = []
+
+    async def replace(self):
+        replacements.append((self.session.workspace.session_id, "replacement"))
+        return "old", "replacement"
+
+    monkeypatch.setattr(ServerState, "_replace_session_locked", replace)
+
+    async def malformed_import(*args, **kwargs):
+        return WorkerCall(
+            "import",
+            {"program_name": "other", "analyzed": True, "language_id": "x", "processor": "x"},
+        )
+
+    async def malformed_import_analyzed(*args, **kwargs):
+        return WorkerCall(
+            "import2",
+            {"program_name": "new2", "analyzed": True, "language_id": "x", "processor": "x"},
+        )
+
+    async def malformed_import_bytes_analyzed(*args, **kwargs):
+        return WorkerCall(
+            "import-bytes",
+            {"program_name": "new3", "analyzed": True, "language_id": "x", "processor": "x"},
+        )
+
+    async def malformed_save(*args, **kwargs):
+        return WorkerCall(
+            "save",
+            {
+                "program_name": "hello",
+                "destination_path": str(tmp_path / "save.gzf"),
+                "bytes_written": True,
+                "overwritten": False,
+            },
+        )
+
+    async def malformed_save_name(*args, **kwargs):
+        return WorkerCall(
+            "save2",
+            {
+                "program_name": "other",
+                "destination_path": str(tmp_path / "save.gzf"),
+                "bytes_written": 1,
+                "overwritten": False,
+            },
+        )
+
+    async def malformed_save_destination(*args, **kwargs):
+        return WorkerCall(
+            "save3",
+            {
+                "program_name": "hello",
+                "destination_path": str(tmp_path / "other.gzf"),
+                "bytes_written": 1,
+                "overwritten": False,
+            },
+        )
+
+    async def malformed_delete(*args, **kwargs):
+        return WorkerCall("delete", {"program_name": "other", "deleted": True})
+
+    monkeypatch.setattr(state.session.runner, "run", malformed_import)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_import(state, str(source), "new", False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_import_analyzed)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_import(state, str(source), "new2", False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_import_bytes_analyzed)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_import_bytes(state, "new3", "Ynl0ZXM=", b"bytes", False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_save)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_save(state, "hello", str(tmp_path / "save.gzf"), False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_save_name)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_save(state, "hello", str(tmp_path / "save.gzf"), False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_save_destination)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_save(state, "hello", str(tmp_path / "save.gzf"), False))
+    monkeypatch.setattr(state.session.runner, "run", malformed_delete)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_delete(state, "hello"))
+    assert len(replacements) == 7
+    asyncio.run(workspace.close())
+
+
+def test_server_rejects_byte_import_name_mismatch(tmp_path: Path, monkeypatch) -> None:
+    from ryuumonbuchi.config import GhidraInstallation
+    from ryuumonbuchi.process import WorkerCall
+    from ryuumonbuchi.server import ServerState, _program_import_bytes, _SessionState
+
+    workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path / "workspace")
+    config = AppConfig(
+        Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+    )
+    state = ServerState(
+        config,
+        GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",)),
+        _SessionState(workspace, WorkerRunner(config, workspace)),
+    )
+    replacements = 0
+
+    async def replace(self):
+        nonlocal replacements
+        replacements += 1
+        return "old", "new"
+
+    async def mismatch(*args, **kwargs):
+        return WorkerCall(
+            "import",
+            {"program_name": "other", "analyzed": False, "language_id": "x", "processor": "x"},
+        )
+
+    monkeypatch.setattr(ServerState, "_replace_session_locked", replace)
+    monkeypatch.setattr(state.session.runner, "run", mismatch)
+    with pytest.raises(Exception, match="replacement"):
+        asyncio.run(_program_import_bytes(state, "bytes", "Ynl0ZXM=", b"bytes", False))
+    assert replacements == 1
+    asyncio.run(workspace.close())

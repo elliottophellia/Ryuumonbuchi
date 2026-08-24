@@ -86,21 +86,20 @@ def test_session_manifest_record_error_branches(workspace: SessionWorkspace) -> 
         {
             "schema": 1,
             "session_id": workspace.session_id,
-            "created_at": "x",
+            "created_at": workspace.created_at.isoformat(),
             "ghidra_version": "x",
-            "programs": ["bad"],
         },
         {
             "schema": 1,
             "session_id": workspace.session_id,
-            "created_at": "x",
+            "created_at": workspace.created_at.isoformat(),
             "ghidra_version": "x",
             "programs": [
                 {
                     "program_name": "bad",
                     "source_path": "x",
                     "source_sha256": "x",
-                    "imported_at": "x",
+                    "imported_at": workspace.created_at.isoformat(),
                     "analyzed": False,
                 }
             ],
@@ -168,17 +167,17 @@ def test_process_wait_response_failure_edges(
     log = tmp_path / "log"
     log.write_bytes(b"log")
     with pytest.raises(WorkerFailedError, match="missing"):
-        runner._read_response(tmp_path / "missing", "r", True, log, tmp_path)
+        runner._read_response(tmp_path / "missing", "r", True, log)
     response = tmp_path / "response"
     response.write_text("[]", encoding="utf-8")
     with pytest.raises(WorkerFailedError, match="schema"):
-        runner._read_response(response, "r", True, log, tmp_path)
+        runner._read_response(response, "r", True, log)
     response.write_text(
         WorkerSuccess(request_id="other", result={}).model_dump_json(by_alias=True),
         encoding="utf-8",
     )
     with pytest.raises(WorkerFailedError, match="schema"):
-        runner._read_response(response, "r", True, log, tmp_path)
+        runner._read_response(response, "r", True, log)
     response.write_text(
         WorkerFailure(
             request_id="other",
@@ -187,7 +186,7 @@ def test_process_wait_response_failure_edges(
         encoding="utf-8",
     )
     with pytest.raises(WorkerFailedError, match="schema"):
-        runner._read_response(response, "r", True, log, tmp_path)
+        runner._read_response(response, "r", True, log)
     with pytest.raises(WorkerFailedError, match="status"):
         asyncio.run(runner._wait(_FakeProcess(7), 9_999_999_999, "r", True, log))  # type: ignore[arg-type]
 

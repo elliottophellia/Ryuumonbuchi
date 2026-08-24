@@ -19,6 +19,7 @@ import pyghidra
 from pydantic import ValidationError
 
 from ..models import (
+    READ_ACTIONS,
     BatchOperation,
     ProgramDeleteOperation,
     ProgramImportBytesOperation,
@@ -65,12 +66,16 @@ def _write_response(
     if len(encoded) > max_response_bytes:
         raise WorkerGhidraError("response_too_large: error response exceeds configured byte limit")
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with temporary.open("wb") as handle:
-        handle.write(encoded)
-        handle.write(b"\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    temporary.replace(path)
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(encoded)
+            handle.write(b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        with suppress(OSError):
+            temporary.unlink()
 
 
 def _import_program(context: WorkerContext, operation: ProgramImportOperation) -> dict[str, Any]:
@@ -143,17 +148,24 @@ def _save_program(
     destination = Path(operation.destination_path).expanduser().resolve()
     if destination.exists() and not operation.overwrite:
         raise OperationError(f"destination already exists: {destination}")
+    overwritten = destination.exists()
     temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
-    with context.writable_program(name) as program:
-        program.saveToPackedFile(File(str(temporary)), pyghidra.task_monitor())
-    temporary.chmod(0o600)
-    temporary.replace(destination)
-    return {
-        "program_name": name,
-        "destination_path": str(destination),
-        "bytes_written": destination.stat().st_size,
-        "overwritten": destination.exists() and operation.overwrite,
-    }
+    try:
+        with context.writable_program(name) as program:
+            program.saveToPackedFile(File(str(temporary)), pyghidra.task_monitor())
+        temporary.chmod(0o600)
+        temporary.replace(destination)
+        return {
+            "program_name": name,
+            "destination_path": str(destination),
+            "bytes_written": destination.stat().st_size,
+            "overwritten": overwritten,
+        }
+    except OSError as exc:
+        raise WorkerGhidraError(f"cannot write destination: {destination}: {exc}") from exc
+    finally:
+        with suppress(OSError):
+            temporary.unlink()
 
 
 def _delete_program(context: WorkerContext, operation: ProgramDeleteOperation) -> dict[str, Any]:
@@ -225,17 +237,30 @@ def worker_main(request_path: Path, response_path: Path) -> int:
                 ),
             )
         ]
+        if lifecycle and len(parsed) != 1:
+            raise OperationError("program import/delete cannot be batched")
+        expected_read_only = not lifecycle and all(
+            operation.action in READ_ACTIONS for operation in parsed
+        )
+        if request.read_only != expected_read_only:
+            raise OperationError("worker read_only flag does not match operation set")
         if lifecycle:
-            if len(parsed) != 1:
-                raise OperationError("program import/delete cannot be batched")
             operation = lifecycle[0]
             if isinstance(operation, ProgramImportOperation):
+                if request.program_name != operation.program_name:
+                    raise OperationError("worker program_name does not match lifecycle operation")
                 result = _import_program(context, operation)
             elif isinstance(operation, ProgramImportBytesOperation):
+                if request.program_name != operation.program_name:
+                    raise OperationError("worker program_name does not match lifecycle operation")
                 result = _import_program_bytes(context, operation)
             elif isinstance(operation, ProgramSaveOperation):
+                if not request.program_name:
+                    raise OperationError("worker program_name does not match lifecycle operation")
                 result = _save_program(context, request, operation)
             else:
+                if request.program_name != operation.program_name:
+                    raise OperationError("worker program_name does not match lifecycle operation")
                 result = _delete_program(context, operation)
         else:
             result = _execute_batch(context, request, parsed)
@@ -252,9 +277,11 @@ def worker_main(request_path: Path, response_path: Path) -> int:
             try:
                 context.close()
             except BaseException as exc:
-                error = ("worker_cleanup_failed", str(exc))
+                traceback.print_exc(file=sys.stderr)
                 exit_code = 1
-        with suppress(Exception):
+                if error is None:
+                    error = ("worker_cleanup_failed", str(exc))
+        try:
             _write_response(
                 response_path,
                 request_id,
@@ -262,6 +289,9 @@ def worker_main(request_path: Path, response_path: Path) -> int:
                 result=result,
                 error=error,
             )
+        except BaseException:
+            traceback.print_exc(file=sys.stderr)
+            exit_code = 1
     return exit_code
 
 
