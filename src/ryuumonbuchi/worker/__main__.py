@@ -95,13 +95,21 @@ def _import_program(context: WorkerContext, operation: ProgramImportOperation) -
             if operation.analyze:
                 pyghidra.analyze(program, pyghidra.task_monitor())
                 analyzed = True
+            language = program.getLanguage()
+            language_id = str(language.getLanguageID())
+            processor = str(language.getProcessor())
             program.save("Imported by Ryuumonbuchi", pyghidra.task_monitor())
     except BaseException:
         if saved_domain_file is not None:
             with suppress(Exception):
                 saved_domain_file.delete()
         raise
-    return {"program_name": operation.program_name, "analyzed": analyzed}
+    return {
+        "program_name": operation.program_name,
+        "analyzed": analyzed,
+        "language_id": language_id,
+        "processor": processor,
+    }
 
 
 def _import_program_bytes(

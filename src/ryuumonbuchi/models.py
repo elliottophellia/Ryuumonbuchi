@@ -53,6 +53,8 @@ class HealthResult(WireModel):
     max_heap_mb: int
     max_cpu: int
     operation_timeout_seconds: int
+    max_response_bytes: int
+    max_log_tail_bytes: int
     session_id: str
     tracked_program_count: int = Field(ge=0)
     worker_running: Literal[False] = False
@@ -92,6 +94,8 @@ class ProgramInfo(WireModel):
     imported_at: datetime
     analyzed: bool
     ghidra_version: str
+    language_id: str | None = None
+    processor: str | None = None
 
 
 class ProgramListResult(WireModel):

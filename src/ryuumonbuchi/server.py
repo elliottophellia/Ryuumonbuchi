@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -232,6 +232,8 @@ def _program_info(record: ProgramRecord, version: str) -> ProgramInfo:
         imported_at=datetime.fromisoformat(record.imported_at),
         analyzed=record.analyzed,
         ghidra_version=version,
+        language_id=record.language_id,
+        processor=record.processor,
     )
 
 
@@ -259,6 +261,8 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
             max_heap_mb=state.config.max_heap_mb,
             max_cpu=state.config.max_cpu,
             operation_timeout_seconds=state.config.operation_timeout_seconds,
+            max_response_bytes=state.config.max_response_bytes,
+            max_log_tail_bytes=state.config.max_log_tail_bytes,
             session_id=state.workspace.session_id,
             tracked_program_count=len(state.workspace.read_manifest().programs),
         )
@@ -923,9 +927,12 @@ async def _program_import(
         "program_name": name,
         "analyze": analyze,
     }
+    worker_result: dict[str, Any] = {}
     try:
         async with state.workspace.operation():
-            await state.runner.run([raw], read_only=False, program_name=name)
+            call = await state.runner.run([raw], read_only=False, program_name=name)
+            if isinstance(call.result, dict):
+                worker_result = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
     except WorkerRunError as exc:
         if exc.uncertain:
             new_id = await state.clear_session()
@@ -933,7 +940,15 @@ async def _program_import(
             raise SessionError(message) from exc
         raise
     state.workspace.update_program(
-        ProgramRecord(name, str(source), source_hash, datetime.now(UTC).isoformat(), analyze)
+        ProgramRecord(
+            name,
+            str(source),
+            source_hash,
+            datetime.now(UTC).isoformat(),
+            analyze,
+            language_id=worker_result.get("language_id"),
+            processor=worker_result.get("processor"),
+        )
     )
     return ProgramImportResult(
         program_name=name,
@@ -959,9 +974,12 @@ async def _program_import_bytes(
         "program_name": name,
         "analyze": analyze,
     }
+    worker_result: dict[str, Any] = {}
     try:
         async with state.workspace.operation():
-            await state.runner.run([raw], read_only=False, program_name=name)
+            call = await state.runner.run([raw], read_only=False, program_name=name)
+            if isinstance(call.result, dict):
+                worker_result = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
     except WorkerRunError as exc:
         if exc.uncertain:
             new_id = await state.clear_session()
@@ -970,7 +988,13 @@ async def _program_import_bytes(
         raise
     state.workspace.update_program(
         ProgramRecord(
-            name, f"bytes:{source_hash}", source_hash, datetime.now(UTC).isoformat(), analyze
+            name,
+            f"bytes:{source_hash}",
+            source_hash,
+            datetime.now(UTC).isoformat(),
+            analyze,
+            language_id=worker_result.get("language_id"),
+            processor=worker_result.get("processor"),
         )
     )
     return ProgramImportResult(

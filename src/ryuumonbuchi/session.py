@@ -57,6 +57,8 @@ class ProgramRecord:
     source_sha256: str
     imported_at: str
     analyzed: bool
+    language_id: str | None = None
+    processor: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +67,8 @@ class ProgramRecord:
             "source_sha256": self.source_sha256,
             "imported_at": self.imported_at,
             "analyzed": self.analyzed,
+            "language_id": self.language_id,
+            "processor": self.processor,
         }
 
 
@@ -185,6 +189,8 @@ class SessionWorkspace:
                     source_sha256=str(raw.get("source_sha256")),
                     imported_at=str(raw.get("imported_at")),
                     analyzed=bool(raw.get("analyzed")),
+                    language_id=cast(str | None, raw.get("language_id")),
+                    processor=cast(str | None, raw.get("processor")),
                 )
                 if record.program_name in programs:
                     message = f"Duplicate program in session manifest: {record.program_name}"

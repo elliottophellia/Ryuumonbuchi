@@ -166,6 +166,12 @@ class _FakeProgram:
     def getDomainFile(self):
         return self.domain
 
+    def getLanguage(self):
+        return SimpleNamespace(
+            getLanguageID=lambda: "x86:LE:64:default",
+            getProcessor=lambda: "x86",
+        )
+
     def startTransaction(self, name):
         self.transactions.append(("start", name))
         return 9
@@ -488,7 +494,12 @@ def test_worker_entry_response_import_delete_and_batch_paths(tmp_path, monkeypat
             "ryuumonbuchi.models", fromlist=["ProgramImportOperation"]
         ).ProgramImportOperation(source_path="source", program_name="hello", analyze=True),
     )
-    assert imported == {"program_name": "hello", "analyzed": True}
+    assert imported == {
+        "program_name": "hello",
+        "analyzed": True,
+        "language_id": "x86:LE:64:default",
+        "processor": "x86",
+    }
     assert results.saved and results.closed and program.saved
 
     results_no_analysis = _FakeLoadResults(_FakeDomainFile())
@@ -575,7 +586,12 @@ def test_worker_entry_import_bytes_roundtrip(tmp_path, monkeypatch):
             "ryuumonbuchi.models", fromlist=["ProgramImportBytesOperation"]
         ).ProgramImportBytesOperation(data=data, program_name="hello", analyze=False),
     )
-    assert imported == {"program_name": "hello", "analyzed": False}
+    assert imported == {
+        "program_name": "hello",
+        "analyzed": False,
+        "language_id": "x86:LE:64:default",
+        "processor": "x86",
+    }
     assert captured["data"] == payload
     source = next(value for kind, value in loader.calls if kind == "source")
     assert not Path(source).exists()
