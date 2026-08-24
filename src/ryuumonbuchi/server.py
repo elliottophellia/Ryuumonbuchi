@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -301,6 +303,29 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
         """Delete exactly one imported root-level program."""
 
         return await _guard(_program_delete(_state(ctx), program_name))
+
+    @mcp.tool()
+    async def program_import_bytes(
+        program_name: str,
+        data: str,
+        analyze: bool = True,
+        *,
+        ctx: Context[ServerState, Any],
+    ) -> ProgramImportResult:
+        """Import caller-selected base64-encoded bytes under an explicit program name."""
+
+        state = _state(ctx)
+        if not state.config.allow_import_bytes:
+            raise _raise_tool("import_bytes_disabled", "byte import is disabled by configuration")
+        try:
+            payload = base64.b64decode(data, validate=True)
+        except ValueError as exc:
+            raise _raise_tool("invalid_params", f"data must be valid base64: {exc}") from exc
+        if len(payload) > state.config.max_import_bytes:
+            message = f"decoded import exceeds {state.config.max_import_bytes} bytes"
+            raise _raise_tool("import_too_large", message)
+        result = await _guard(_program_import_bytes(state, program_name, data, payload, analyze))
+        return ProgramImportResult.model_validate(result)
 
     @mcp.tool()
     async def program_export(
@@ -909,6 +934,44 @@ async def _program_import(
         raise
     state.workspace.update_program(
         ProgramRecord(name, str(source), source_hash, datetime.now(UTC).isoformat(), analyze)
+    )
+    return ProgramImportResult(
+        program_name=name,
+        source_sha256=source_hash,
+        ghidra_version=state.installation.version,
+        analyzed=analyze,
+    )
+
+
+async def _program_import_bytes(
+    state: ServerState,
+    program_name: str,
+    data: str,
+    payload: bytes,
+    analyze: bool,
+) -> ProgramImportResult:
+    name = validate_program_name(program_name)
+    source_hash = hashlib.sha256(payload).hexdigest()
+    state.workspace.ensure_program_absent(name)
+    raw = {
+        "action": "program_import_bytes",
+        "data": data,
+        "program_name": name,
+        "analyze": analyze,
+    }
+    try:
+        async with state.workspace.operation():
+            await state.runner.run([raw], read_only=False, program_name=name)
+    except WorkerRunError as exc:
+        if exc.uncertain:
+            new_id = await state.clear_session()
+            message = f"program import uncertain; replacement session created: {new_id}"
+            raise SessionError(message) from exc
+        raise
+    state.workspace.update_program(
+        ProgramRecord(
+            name, f"bytes:{source_hash}", source_hash, datetime.now(UTC).isoformat(), analyze
+        )
     )
     return ProgramImportResult(
         program_name=name,

@@ -542,6 +542,45 @@ def test_worker_entry_response_import_delete_and_batch_paths(tmp_path, monkeypat
     assert domain_file.deleted
 
 
+def test_worker_entry_import_bytes_roundtrip(tmp_path, monkeypatch):
+    import base64
+
+    monitor = object()
+    monkeypatch.setattr(worker_entry.pyghidra, "task_monitor", lambda: monitor)
+    monkeypatch.setattr(worker_entry.pyghidra, "analyze", lambda *args: None)
+    program = _FakeProgram()
+
+    class ImportContext:
+        project = "project"
+
+        @contextmanager
+        def writable_program(self, name):
+            yield program
+
+    captured: dict[str, bytes] = {}
+
+    class CaptureLoader(_FakeLoader):
+        def load(self):
+            source = next(value for kind, value in self.calls if kind == "source")
+            captured["data"] = Path(source).read_bytes()
+            return super().load()
+
+    loader = CaptureLoader(_FakeLoadResults(_FakeDomainFile()))
+    monkeypatch.setattr(worker_entry.pyghidra, "program_loader", lambda: loader)
+    payload = b"\x7fELF-bytes-payload"
+    data = base64.b64encode(payload).decode()
+    imported = worker_entry._import_program_bytes(
+        ImportContext(),
+        __import__(
+            "ryuumonbuchi.models", fromlist=["ProgramImportBytesOperation"]
+        ).ProgramImportBytesOperation(data=data, program_name="hello", analyze=False),
+    )
+    assert imported == {"program_name": "hello", "analyzed": False}
+    assert captured["data"] == payload
+    source = next(value for kind, value in loader.calls if kind == "source")
+    assert not Path(source).exists()
+
+
 def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
     request = _request(tmp_path, read_only=True)
     context = SimpleNamespace()

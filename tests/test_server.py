@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -186,6 +188,19 @@ def test_complete_catalog_handlers_with_fake_worker(
             assert not imported.is_error
             deleted = await client.call_tool("program_delete", {"program_name": "imported"})
             assert not deleted.is_error
+            imported_bytes = await client.call_tool(
+                "program_import_bytes",
+                {
+                    "program_name": "bytesy",
+                    "data": base64.b64encode(b"bytes").decode(),
+                },
+            )
+            assert not imported_bytes.is_error
+            info = await client.call_tool("program_info", {"program_name": "bytesy"})
+            assert (
+                info.structured_content["source_path"]
+                == f"bytes:{hashlib.sha256(b'bytes').hexdigest()}"
+            )
 
     try:
         asyncio.run(run())
@@ -252,5 +267,53 @@ def test_program_export_disabled_by_config() -> None:
             )
         assert result.is_error
         assert "export_disabled" in str(result)
+
+    asyncio.run(run())
+
+
+def test_program_import_bytes_gate_and_validation() -> None:
+    config = AppConfig(
+        Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+    )
+    server = create_server(config)
+
+    async def run() -> None:
+        async with Client(server, raise_exceptions=False) as client:
+            bad = await client.call_tool(
+                "program_import_bytes", {"program_name": "x", "data": "!!!not-base64!!!"}
+            )
+            assert bad.is_error
+            assert "invalid_params" in str(bad)
+            big = await client.call_tool(
+                "program_import_bytes",
+                {
+                    "program_name": "x",
+                    "data": base64.b64encode(b"\x00" * (config.max_import_bytes + 1)).decode(),
+                },
+            )
+            assert big.is_error
+            assert "import_too_large" in str(big)
+
+    asyncio.run(run())
+
+
+def test_program_import_bytes_disabled_by_config() -> None:
+    config = AppConfig(
+        Path("/usr/share/ghidra"),
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
+        allow_import_bytes=False,
+    )
+    server = create_server(config)
+
+    async def run() -> None:
+        async with Client(server, raise_exceptions=False) as client:
+            result = await client.call_tool(
+                "program_import_bytes",
+                {"program_name": "x", "data": base64.b64encode(b"bytes").decode()},
+            )
+        assert result.is_error
+        assert "import_bytes_disabled" in str(result)
 
     asyncio.run(run())

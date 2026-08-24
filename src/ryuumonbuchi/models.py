@@ -428,6 +428,13 @@ class ProgramExportResult(WireModel):
     overwritten: bool = False
 
 
+class ProgramImportBytesOperation(WireModel):
+    action: Literal["program_import_bytes"] = "program_import_bytes"
+    data: str = Field(min_length=1, max_length=100_663_296)
+    program_name: ProgramName
+    analyze: bool = True
+
+
 type BatchOperation = Annotated[
     FunctionListOperation
     | FunctionGetOperation
@@ -457,10 +464,8 @@ type BatchOperation = Annotated[
     | RedoOperation,
     Field(discriminator="action"),
 ]
-
-
 type WorkerOperation = Annotated[
-    BatchOperation | ProgramImportOperation | ProgramDeleteOperation,
+    BatchOperation | ProgramImportOperation | ProgramImportBytesOperation | ProgramDeleteOperation,
     Field(discriminator="action"),
 ]
 

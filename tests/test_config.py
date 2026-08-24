@@ -80,3 +80,18 @@ def test_boolean_env_invalid_value_rejected(fake_ghidra: Path) -> None:
             ghidra_install_dir=fake_ghidra,
             environ={"RYUUMONBUCHI_ALLOW_EXPORT": "maybe"},
         )
+
+
+def test_max_import_bytes_env_and_validation(fake_ghidra: Path) -> None:
+    config = build_config(
+        ghidra_install_dir=fake_ghidra,
+        environ={"RYUUMONBUCHI_MAX_IMPORT_BYTES": "1024"},
+    )
+    assert config.max_import_bytes == 1024
+    with pytest.raises(ConfigError, match="RYUUMONBUCHI_MAX_IMPORT_BYTES must be an integer"):
+        build_config(
+            ghidra_install_dir=fake_ghidra,
+            environ={"RYUUMONBUCHI_MAX_IMPORT_BYTES": "lots"},
+        )
+    with pytest.raises(ConfigError, match="max_import_bytes"):
+        AppConfig(fake_ghidra, max_import_bytes=0)

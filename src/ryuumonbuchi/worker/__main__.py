@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from ..models import (
     BatchOperation,
     ProgramDeleteOperation,
+    ProgramImportBytesOperation,
     ProgramImportOperation,
     WorkerError,
     WorkerFailure,
@@ -103,6 +104,24 @@ def _import_program(context: WorkerContext, operation: ProgramImportOperation) -
     return {"program_name": operation.program_name, "analyzed": analyzed}
 
 
+def _import_program_bytes(
+    context: WorkerContext, operation: ProgramImportBytesOperation
+) -> dict[str, Any]:
+    import base64
+    import tempfile
+
+    payload = base64.b64decode(operation.data, validate=True)
+    with tempfile.TemporaryDirectory(prefix="ryuumonbuchi-import-") as directory:
+        source = Path(directory) / operation.program_name
+        source.write_bytes(payload)
+        wrapped = ProgramImportOperation(
+            source_path=str(source),
+            program_name=operation.program_name,
+            analyze=operation.analyze,
+        )
+        return _import_program(context, wrapped)
+
+
 def _delete_program(context: WorkerContext, operation: ProgramDeleteOperation) -> dict[str, Any]:
     if context.project is None:
         raise WorkerGhidraError("Ghidra project is not open")
@@ -162,17 +181,21 @@ def worker_main(request_path: Path, response_path: Path) -> int:
         lifecycle = [
             operation
             for operation in parsed
-            if isinstance(operation, (ProgramImportOperation, ProgramDeleteOperation))
+            if isinstance(
+                operation,
+                (ProgramImportOperation, ProgramImportBytesOperation, ProgramDeleteOperation),
+            )
         ]
         if lifecycle:
             if len(parsed) != 1:
                 raise OperationError("program import/delete cannot be batched")
             operation = lifecycle[0]
-            result = (
-                _import_program(context, operation)
-                if isinstance(operation, ProgramImportOperation)
-                else _delete_program(context, operation)
-            )
+            if isinstance(operation, ProgramImportOperation):
+                result = _import_program(context, operation)
+            elif isinstance(operation, ProgramImportBytesOperation):
+                result = _import_program_bytes(context, operation)
+            else:
+                result = _delete_program(context, operation)
         else:
             result = _execute_batch(context, request, parsed)
     except ValidationError as exc:
