@@ -1,9 +1,9 @@
 # Ryuumonbuchi
 maybe the headless ghidra mcp you are looking for
 
-Ryuumonbuchi is a stdio MCP server for headless Ghidra analysis. An MCP client starts one server process, communicates through standard input and output, and calls a finite catalog of typed tools.
+Ryuumonbuchi connects an MCP client to headless Ghidra over stdio. Use it to import a binary, inspect functions and memory, patch bytes, or save a snapshot.
 
-The MCP process does not embed a JVM. Each request launches one short-lived Ghidra worker, with a filtered environment and a private request directory. Workers open the selected program, perform the requested operation, return structured JSON, and exit.
+Workers are disposable on purpose. Each request starts a JVM, reads the result, and tears the worker down. That keeps Ghidra state out of the parent and gives uncertain mutations a clean recovery path.
 
 ## Requirements
 
@@ -15,30 +15,30 @@ The MCP process does not embed a JVM. Each request launches one short-lived Ghid
 
 ## Quick start
 
-Run the tagged release directly from Git:
+Try the released tag:
 
 ```bash
 uvx --from git+https://github.com/elliottophellia/Ryuumonbuchi@v0.2.0 ryuumonbuchi
 ```
 
-For the moving source tree:
+Use the current source tree:
 
 ```bash
 uvx --from git+https://github.com/elliottophellia/Ryuumonbuchi ryuumonbuchi
 ```
 
-From a local checkout:
+From a checkout on your machine:
 
 ```bash
 uvx --from . ryuumonbuchi
 python -m ryuumonbuchi
 ```
 
-Set `GHIDRA_INSTALL_DIR` or pass `--ghidra-install-dir` when Ghidra is not at `/usr/share/ghidra`. Startup validates Linux, the Ghidra layout and metadata, Python compatibility, and the configured limits before opening MCP stdio. Invalid configuration fails fast with a diagnostic and exit status 2; no partially started server remains.
+If Ghidra is installed somewhere other than `/usr/share/ghidra`, set `GHIDRA_INSTALL_DIR` or pass `--ghidra-install-dir`. Ryuumonbuchi checks the host, Ghidra layout, metadata, Python support, and limits before opening MCP stdio. A bad setup prints the problem and exits with status 2, before a server can start in a broken state.
 
 ## MCP client configuration
 
-A complete stdio client configuration using the supported environment variable:
+Most MCP clients can use a setup like this. Change the Ghidra path if needed:
 
 ```json
 {
@@ -70,7 +70,7 @@ A complete stdio client configuration using the supported environment variable:
 
 ## Configuration
 
-Precedence is CLI option, then environment variable, then default. The boolean environment values `0`, `false`, `no`, and `off` disable a setting; `1`, `true`, `yes`, and `on` enable it, case-insensitively and with surrounding whitespace ignored.
+CLI wins. If a flag is absent, its environment variable wins. If that is absent too, the default applies. Boolean environment values are case-insensitive: `0`, `false`, `no`, and `off` mean false; `1`, `true`, `yes`, and `on` mean true.
 
 | Environment variable | Default | Bounds / meaning |
 | --- | --- | --- |
@@ -82,9 +82,11 @@ Precedence is CLI option, then environment variable, then default. The boolean e
 | `RYUUMONBUCHI_ALLOW_EXPORT` | `true` | Boolean; controls executable export and GZF save |
 | `RYUUMONBUCHI_ALLOW_IMPORT_BYTES` | `true` | Boolean; controls base64 byte import |
 
-The 4 MiB response limit and 64 KiB failure-log tail are fixed internal limits. `health` reports both values; neither is an environment variable.
+Responses top out at 4 MiB, and failure logs keep a 64 KiB tail. These are fixed internal limits. `health` reports them; no environment variable changes them.
 
 ## MCP tools
+
+Every program-bound call takes an explicit `program_name`. The server never guesses which imported program you meant.
 
 ### Session and health
 
@@ -110,9 +112,11 @@ The 4 MiB response limit and 64 KiB failure-log tail are fixed internal limits. 
 
 `batch`
 
-Every program-bound tool requires an explicit imported `program_name`. There is no general filesystem browser, arbitrary script or Java execution, GUI transport, network transport, or unbounded project enumeration.
+The server stays narrow: no general filesystem browser, arbitrary script or Java execution, GUI transport, network transport, or unbounded project enumeration.
 
 ## Limits
+
+The tool bounds are:
 
 | Contract | Limit |
 | --- | --- |
@@ -129,11 +133,11 @@ Every program-bound tool requires an explicit imported `program_name`. There is 
 | Program names | 1..128 characters |
 | Export / save destinations | 1..4096 characters |
 
-`program_import` reads the caller-selected source path. Its source-path field has no application-level length bound. `program_import_bytes` accepts caller-owned base64 data and is bounded by `RYUUMONBUCHI_MAX_IMPORT_BYTES`.
+`program_import` reads the source path you provide. Its source-path field has no application-level length bound. If the bytes are already in hand, `program_import_bytes` accepts caller-owned base64 data and applies `RYUUMONBUCHI_MAX_IMPORT_BYTES` after decoding.
 
 ## Examples
 
-Import a source path, then inspect it:
+Import a normal file:
 
 ```json
 {
@@ -146,7 +150,7 @@ Import a source path, then inspect it:
 }
 ```
 
-Import caller-owned base64 bytes instead of a source path:
+Import bytes you already have:
 
 ```json
 {
@@ -159,7 +163,7 @@ Import caller-owned base64 bytes instead of a source path:
 }
 ```
 
-Patch bytes and export the resulting executable. Export and save destinations are written by the worker; relative destinations are canonicalized by the parent MCP process against its current working directory before launch.
+Patch one instruction, then export the result:
 
 ```json
 {
@@ -183,7 +187,9 @@ Patch bytes and export the resulting executable. Export and save destinations ar
 }
 ```
 
-Existing export destinations are refused unless `overwrite` is `true`; refusal leaves the existing file untouched. `program_save` writes a lossless GZF snapshot containing analysis, types, symbols, comments, and patches:
+The worker writes export and save destinations. Relative paths are resolved by the parent MCP process against its current working directory before the worker starts. Existing export destinations are refused unless `overwrite` is `true`, so the original file stays untouched when a request is refused.
+
+Save a lossless GZF snapshot:
 
 ```json
 {
@@ -195,17 +201,19 @@ Existing export destinations are refused unless `overwrite` is `true`; refusal l
 }
 ```
 
-The snapshot is caller-owned. Re-import it explicitly in a later session with `program_import`; Ryuumonbuchi does not browse or persist it automatically.
+That snapshot stays at the destination you chose. Import it later with `program_import` to restore the saved analysis, types, symbols, comments, and patches. Ryuumonbuchi does not search for snapshots or copy them into a permanent project.
 
 ## Session and security semantics
 
-Each MCP lifespan gets a cryptographically random private workspace with mode `0700`, an owner lock, an ephemeral Ghidra project, and one JVM worker per request. A worker request runs with a filtered environment and a private request directory. If a mutating worker result is uncertain, the server installs a replacement session before queued state-changing work or an explicit `session_clear` can capture state; only the replacement ID is reported.
+Sessions are disposable. Each one gets a random private workspace with mode `0700`, an owner lock, and an ephemeral Ghidra project. Each request gets one JVM worker, a private request directory, and a filtered environment.
 
-Explicit import paths are read. Explicit export and save paths are written. The worker process is isolated for ownership and resource control, but process isolation is not an OS sandbox. The catalog intentionally excludes arbitrary scripts, GUI controls, network transport, a general filesystem browser, and arbitrary Java execution.
+If a mutating worker fails and its result is uncertain, the server replaces the session before queued state-changing work or an explicit `session_clear` can use the old one. The error includes the replacement session ID. The old workspace is not copied into the new one.
+
+Import paths are read; export and save paths are written. Workers provide process and resource boundaries, but they are not an OS sandbox. The server does not expose arbitrary scripts, GUI controls, network transport, a general filesystem browser, or arbitrary Java execution.
 
 ## Contributor verification
 
-Run the same local commands used by CI:
+Run these before opening a PR:
 
 ```bash
 uv sync --locked --all-groups
@@ -220,10 +228,10 @@ bash -c 'shopt -s nullglob; wheels=(dist/ryuumonbuchi-*.whl); (( ${#wheels[@]} =
 git diff --check
 ```
 
-Real Ghidra verification is separate and requires a provisioned host:
+The real-Ghidra tests need a provisioned host:
 
 ```bash
 PYTHONWARNINGS=error uv run pytest -m live -W error -q
 ```
 
-The project is GPL-2.0-only. Delivery is Git-only; there is no PyPI publication workflow.
+Ryuumonbuchi is GPL-2.0-only. Delivery is Git-only; there is no PyPI publication workflow.
