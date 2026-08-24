@@ -431,9 +431,22 @@ class RedoOperation(WireModel):
     count: Count = 1
 
 
-class ProgramImportOperation(WireModel):
-    action: Literal["program_import"] = "program_import"
-    source_path: str
+class ProgramSaveOperation(WireModel):
+    action: Literal["program_save"] = "program_save"
+    destination_path: str = Field(min_length=1, max_length=4096)
+    overwrite: bool = False
+
+
+class ProgramSaveResult(WireModel):
+    program_name: str
+    destination_path: str
+    bytes_written: int = Field(ge=0)
+    overwritten: bool = False
+
+
+class ProgramImportBytesOperation(WireModel):
+    action: Literal["program_import_bytes"] = "program_import_bytes"
+    data: str = Field(min_length=1, max_length=100_663_296)
     program_name: ProgramName
     analyze: bool = True
 
@@ -456,9 +469,9 @@ class ProgramExportResult(WireModel):
     overwritten: bool = False
 
 
-class ProgramImportBytesOperation(WireModel):
-    action: Literal["program_import_bytes"] = "program_import_bytes"
-    data: str = Field(min_length=1, max_length=100_663_296)
+class ProgramImportOperation(WireModel):
+    action: Literal["program_import"] = "program_import"
+    source_path: str
     program_name: ProgramName
     analyze: bool = True
 
@@ -495,7 +508,11 @@ type BatchOperation = Annotated[
     Field(discriminator="action"),
 ]
 type WorkerOperation = Annotated[
-    BatchOperation | ProgramImportOperation | ProgramImportBytesOperation | ProgramDeleteOperation,
+    BatchOperation
+    | ProgramImportOperation
+    | ProgramImportBytesOperation
+    | ProgramSaveOperation
+    | ProgramDeleteOperation,
     Field(discriminator="action"),
 ]
 

@@ -66,6 +66,7 @@ from .models import (
     ProgramImportResult,
     ProgramInfo,
     ProgramListResult,
+    ProgramSaveResult,
     RedoOperation,
     Reference,
     ReferencesOperation,
@@ -362,6 +363,27 @@ def create_server(config: AppConfig) -> MCPServer[ServerState]:
             )
         )
         return ProgramExportResult.model_validate(result)
+
+    @mcp.tool()
+    async def program_save(
+        program_name: str,
+        destination_path: str,
+        overwrite: bool = False,
+        *,
+        ctx: Context[ServerState, Any],
+    ) -> ProgramSaveResult:
+        """Write a lossless GZF snapshot of the program to a destination file.
+
+        The snapshot includes analysis, types, symbols, comments, and patches.
+        Re-import it later with program_import to restore full session state.
+        Disabled when RYUUMONBUCHI_ALLOW_EXPORT is set to a false value.
+        """
+
+        state = _state(ctx)
+        if not state.config.allow_export:
+            raise _raise_tool("export_disabled", "program snapshot is disabled by configuration")
+        result = await _guard(_program_save(state, program_name, destination_path, overwrite))
+        return ProgramSaveResult.model_validate(result)
 
     @mcp.tool()
     async def program_list(ctx: Context[ServerState, Any]) -> ProgramListResult:
@@ -1054,6 +1076,34 @@ async def _program_import_bytes(
         source_sha256=source_hash,
         ghidra_version=state.installation.version,
         analyzed=analyze,
+    )
+
+
+async def _program_save(
+    state: ServerState, program_name: str, destination_path: str, overwrite: bool
+) -> ProgramSaveResult:
+    name = validate_program_name(program_name)
+    state.workspace.require_program(name)
+    raw = {
+        "action": "program_save",
+        "destination_path": destination_path,
+        "overwrite": overwrite,
+    }
+    try:
+        async with state.workspace.operation():
+            call = await state.runner.run([raw], read_only=False, program_name=name)
+    except WorkerRunError as exc:
+        if exc.uncertain:
+            new_id = await state.clear_session()
+            message = f"program save uncertain; replacement session created: {new_id}"
+            raise SessionError(message) from exc
+        raise
+    result: dict[str, Any] = cast(dict[str, Any], call.result)  # pyright: ignore[reportUnknownMemberType]
+    return ProgramSaveResult(
+        program_name=name,
+        destination_path=str(result.get("destination_path", destination_path)),
+        bytes_written=int(result.get("bytes_written", 0)),
+        overwritten=bool(result.get("overwritten", False)),
     )
 
 

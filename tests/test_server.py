@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
-# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false
+# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -88,6 +88,15 @@ def test_complete_catalog_handlers_with_fake_worker(
             result = {"analyzed": True, "log": ""}
         elif action in {"analysis_options_get", "analysis_options_set"}:
             result = {}
+        elif action == "analysis_list_analyzers":
+            result = {"items": [], "offset": 0, "limit": 100, "has_more": False}
+        elif action in {"program_export", "program_save"}:
+            result = {
+                "program_name": program_name or "hello",
+                "destination_path": str(operations[0].get("destination_path", "")),
+                "bytes_written": 1,
+                "overwritten": False,
+            }
         elif len(operations) > 1:
             result = {
                 "results": [{"action": item["action"], "result": page} for item in operations]
@@ -166,6 +175,11 @@ def test_complete_catalog_handlers_with_fake_worker(
                     "edit_set_data_type",
                     {"program_name": "hello", "address": "1000", "data_type": "dword"},
                 ),
+                (
+                    "program_export",
+                    {"program_name": "hello", "destination_path": "/tmp/export.bin"},
+                ),
+                ("program_save", {"program_name": "hello", "destination_path": "/tmp/save.gzf"}),
                 ("edit_set_comment", {"program_name": "hello", "address": "1000", "comment": "x"}),
                 (
                     "edit_set_prototype",
@@ -213,6 +227,108 @@ def test_complete_catalog_handlers_with_fake_worker(
     finally:
         if not workspace.closed:
             asyncio.run(workspace.close())
+
+
+def test_server_import_and_save_success_paths(tmp_path, monkeypatch):
+    from ryuumonbuchi.config import GhidraInstallation
+    from ryuumonbuchi.process import WorkerCall, WorkerFailedError, WorkerRunner
+    from ryuumonbuchi.server import (  # pyright: ignore[reportPrivateUsage]
+        ServerState,
+        _program_import,
+        _program_import_bytes,
+        _program_save,
+    )
+    from ryuumonbuchi.session import SessionWorkspace, stream_sha256
+
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"source")
+    workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path / "ws")
+    try:
+        installation = GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",))
+        state = ServerState(
+            AppConfig(
+                Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+            ),
+            installation,
+            workspace,
+            WorkerRunner(
+                AppConfig(
+                    Path("/usr/share/ghidra"),
+                    max_heap_mb=256,
+                    max_cpu=1,
+                    operation_timeout_seconds=30,
+                ),
+                workspace,
+            ),
+        )
+
+        async def fake_run(operations, **kwargs):
+            action = operations[0]["action"]
+            if action == "program_save":
+                return WorkerCall(
+                    "r",
+                    {
+                        "destination_path": operations[0]["destination_path"],
+                        "bytes_written": 4,
+                        "overwritten": False,
+                    },
+                )
+            return WorkerCall("r", {"language_id": "x86:LE:64:default", "processor": "x86"})
+
+        monkeypatch.setattr(state.runner, "run", fake_run)
+        imported = asyncio.run(_program_import(state, str(source), "source", True))
+        assert imported.source_sha256 == stream_sha256(source)
+        saved = asyncio.run(_program_save(state, "source", str(tmp_path / "snap.gzf"), False))
+        assert saved.bytes_written == 4
+        data = base64.b64encode(b"bytes").decode()
+        imported_bytes = asyncio.run(_program_import_bytes(state, "bytes", data, b"bytes", False))
+        assert imported_bytes.source_sha256 == hashlib.sha256(b"bytes").hexdigest()
+
+        async def certain(*args, **kwargs):
+            message = "certain"
+            raise WorkerFailedError(message, request_id="r", uncertain=False)
+
+        monkeypatch.setattr(state.runner, "run", certain)
+        with pytest.raises(WorkerFailedError):
+            asyncio.run(_program_import(state, str(source), "certain", False))
+        with pytest.raises(WorkerFailedError):
+            asyncio.run(_program_import_bytes(state, "certain_bytes", data, b"bytes", False))
+    finally:
+        asyncio.run(workspace.close())
+
+
+def test_server_save_uncertain_transition(tmp_path, monkeypatch):
+    from ryuumonbuchi.config import GhidraInstallation
+    from ryuumonbuchi.process import WorkerFailedError, WorkerRunner
+    from ryuumonbuchi.server import ServerState, _program_save
+    from ryuumonbuchi.session import SessionError, SessionWorkspace
+
+    workspace = SessionWorkspace.create("12.0.4", temp_dir=tmp_path / "ws")
+    try:
+        config = AppConfig(
+            Path("/usr/share/ghidra"), max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30
+        )
+        installation = GhidraInstallation(Path("/usr/share/ghidra"), "12.0.4", 21, ("3.13",))
+        runner = WorkerRunner(config, workspace)
+        state = ServerState(config, installation, workspace, runner)
+        workspace.update_program(
+            ProgramRecord("hello", "source", "hash", workspace.created_at.isoformat(), False)
+        )
+
+        async def clear_session(self):
+            return "old", "new"
+
+        monkeypatch.setattr(ServerState, "clear_session", clear_session)
+
+        async def uncertain(*args, **kwargs):
+            message = "save"
+            raise WorkerFailedError(message, request_id="r", uncertain=True)
+
+        monkeypatch.setattr(runner, "run", uncertain)
+        with pytest.raises(SessionError, match="program save"):
+            asyncio.run(_program_save(state, "hello", str(tmp_path / "snap.gzf"), False))
+    finally:
+        asyncio.run(workspace.close())
 
 
 def test_selector_tool_schemas_encode_exactly_one() -> None:
@@ -271,8 +387,13 @@ def test_program_export_disabled_by_config() -> None:
                 "program_export",
                 {"program_name": "hello", "destination_path": "/tmp/out.bin"},
             )
-        assert result.is_error
-        assert "export_disabled" in str(result)
+            assert result.is_error
+            assert "export_disabled" in str(result)
+            snapshot = await client.call_tool(
+                "program_save", {"program_name": "hello", "destination_path": "/tmp/save.gzf"}
+            )
+            assert snapshot.is_error
+            assert "export_disabled" in str(snapshot)
 
     asyncio.run(run())
 

@@ -69,6 +69,24 @@ def test_print_flag_workflow_import_patch_export_run(tmp_path: Path) -> None:
             )
             assert not defined.is_error, defined
             assert defined.structured_content["changed"] is True
+            snapshot = tmp_path / "print_flag.gzf"
+            saved = await client.call_tool(
+                "program_save",
+                {"program_name": "print_flag", "destination_path": str(snapshot)},
+            )
+            assert not saved.is_error, saved
+            assert snapshot.stat().st_size > 0
+
+            restored = await client.call_tool(
+                "program_import",
+                {"source_path": str(snapshot), "program_name": "roundtrip"},
+            )
+            assert not restored.is_error, restored
+            restored_main = await client.call_tool(
+                "function_decompile", {"program_name": "roundtrip", "name": "main"}
+            )
+            assert not restored_main.is_error, restored_main
+            assert "sleep(0)" in restored_main.structured_content["c_code"]
 
             destination = tmp_path / "patched_flag"
             exported = await client.call_tool(

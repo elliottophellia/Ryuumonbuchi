@@ -22,4 +22,4 @@ jobs:
       - run: uv run pytest -m "not live" --cov=ryuumonbuchi --cov-branch --cov-report=term-missing --cov-fail-under=100
       - run: uv build --no-sources
       - run: uv run python -m ryuumonbuchi --version
-      - run: uvx --from dist/ryuumonbuchi-0.1.0-py3-none-any.whl ryuumonbuchi --version
+      - run: uvx --from dist/ryuumonbuchi-0.2.0-py3-none-any.whl ryuumonbuchi --version

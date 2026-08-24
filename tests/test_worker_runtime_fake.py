@@ -183,6 +183,9 @@ class _FakeProgram:
     def save(self, comment, monitor):
         self.saved.append(comment)
 
+    def saveToPackedFile(self, file, monitor):
+        Path(file).write_bytes(b"GZF-SNAPSHOT")
+
 
 class _FakeWorkerContext:
     def __init__(self, request):
@@ -269,6 +272,8 @@ def _install_context_modules(monkeypatch, *, valid=True, release_error=None, rea
     listing = types.ModuleType("ghidra.program.model.listing")
     java = types.ModuleType("java")
     java_lang = types.ModuleType("java.lang")
+    java_io = types.ModuleType("java.io")
+    java_io.File = lambda path: path
     decompiler = types.ModuleType("ghidra.app.decompiler")
     domain_program = _FakeDomainProgram(valid=valid, release_error=release_error)
     domain_file = _FakeDomainFile(domain_program, read_error)
@@ -282,6 +287,7 @@ def _install_context_modules(monkeypatch, *, valid=True, release_error=None, rea
         "ghidra.program.model.listing": listing,
         "java": java,
         "java.lang": java_lang,
+        "java.io": java_io,
         "ghidra.app.decompiler": decompiler,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -597,6 +603,51 @@ def test_worker_entry_import_bytes_roundtrip(tmp_path, monkeypatch):
     assert not Path(source).exists()
 
 
+def test_worker_entry_program_save_lifecycle(tmp_path, monkeypatch):
+    _install_context_modules(monkeypatch)
+    monkeypatch.setattr(worker_entry.pyghidra, "task_monitor", lambda: "monitor")
+    destination = tmp_path / "snapshot.gzf"
+    program = _FakeProgram()
+    context = SimpleNamespace()
+
+    @contextmanager
+    def writable(name):
+        yield program
+
+    context.writable_program = writable
+    request = SimpleNamespace(program_name="hello")
+    operation = __import__(
+        "ryuumonbuchi.models", fromlist=["ProgramSaveOperation"]
+    ).ProgramSaveOperation(destination_path=str(destination))
+    result = worker_entry._save_program(context, request, operation)
+    assert result["program_name"] == "hello"
+    assert destination.read_bytes() == b"GZF-SNAPSHOT"
+    assert result["bytes_written"] == len(b"GZF-SNAPSHOT")
+
+
+def test_worker_entry_program_save_errors(tmp_path, monkeypatch):
+    _install_context_modules(monkeypatch)
+    monkeypatch.setattr(worker_entry.pyghidra, "task_monitor", lambda: "monitor")
+    program = _FakeProgram()
+    context = SimpleNamespace()
+
+    @contextmanager
+    def writable(name):
+        yield program
+
+    context.writable_program = writable
+    operation = __import__(
+        "ryuumonbuchi.models", fromlist=["ProgramSaveOperation"]
+    ).ProgramSaveOperation(destination_path=str(tmp_path / "snapshot.gzf"))
+    with pytest.raises(OperationError, match="program_name"):
+        worker_entry._save_program(context, SimpleNamespace(program_name=None), operation)
+    destination = tmp_path / "existing.gzf"
+    destination.write_bytes(b"x")
+    operation = operation.model_copy(update={"destination_path": str(destination)})
+    with pytest.raises(OperationError, match="destination already exists"):
+        worker_entry._save_program(context, SimpleNamespace(program_name="hello"), operation)
+
+
 def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
     request = _request(tmp_path, read_only=True)
     context = SimpleNamespace()
@@ -689,6 +740,28 @@ def test_worker_entry_batch_and_worker_main_paths(tmp_path, monkeypatch):
     )
     write_request(request_path, delete_op)
     monkeypatch.setattr(worker_entry, "_delete_program", lambda *args: {"deleted": True})
+    assert worker_entry.worker_main(request_path, response_path) == 0
+
+    import_bytes_op = _request(
+        tmp_path,
+        operations=[
+            {"action": "program_import_bytes", "data": "Ynl0ZXM=", "program_name": "bytes"}
+        ],
+        program_name=None,
+    )
+    write_request(request_path, import_bytes_op)
+    monkeypatch.setattr(
+        worker_entry, "_import_program_bytes", lambda *args: {"program_name": "bytes"}
+    )
+    assert worker_entry.worker_main(request_path, response_path) == 0
+
+    save_op = _request(
+        tmp_path,
+        operations=[{"action": "program_save", "destination_path": str(tmp_path / "snapshot.gzf")}],
+        program_name="new",
+    )
+    write_request(request_path, save_op)
+    monkeypatch.setattr(worker_entry, "_save_program", lambda *args: {"saved": True})
     assert worker_entry.worker_main(request_path, response_path) == 0
 
     monkeypatch.setattr(

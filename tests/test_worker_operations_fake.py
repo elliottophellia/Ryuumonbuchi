@@ -80,7 +80,10 @@ def install_ghidra_modules(monkeypatch):
         "ghidra.app.plugin": types.ModuleType("ghidra.app.plugin"),
         "ghidra.app.plugin.core": types.ModuleType("ghidra.app.plugin.core"),
         "ghidra.app.plugin.core.analysis": types.ModuleType("ghidra.app.plugin.core.analysis"),
+        "java": types.ModuleType("java"),
+        "java.io": types.ModuleType("java.io"),
     }
+    modules["java.io"].File = lambda path: path
     modules["ghidra.app.services"].Analyzer = SimpleNamespace(class_="ghidra.app.services.Analyzer")
     modules["ghidra.util.classfinder"].ClassSearcher = SimpleNamespace(
         getInstances=lambda cls: _FAKE_ANALYZERS
@@ -651,6 +654,36 @@ def test_operation_reads_and_selectors(monkeypatch):
     ).c_code
 
 
+def test_dispatch_new_operation_branches(monkeypatch):
+    from ryuumonbuchi.worker import dispatch
+
+    install_ghidra_modules(monkeypatch)
+    program = Program()
+    monitor = Monitor()
+    calls = []
+    monkeypatch.setattr(
+        ops, "analysis_list_analyzers", lambda *args: calls.append("analyzers") or "a"
+    )
+    monkeypatch.setattr(ops, "set_data_type", lambda *args: calls.append("datatype") or "d")
+    monkeypatch.setattr(ops, "program_export", lambda *args: calls.append("export") or "e")
+    assert (
+        dispatch.execute_operation(None, program, AnalysisListAnalyzersOperation(), monitor) == "a"
+    )
+    assert (
+        dispatch.execute_operation(
+            None, program, SetDataTypeOperation(address="1000", data_type="x"), monitor
+        )
+        == "d"
+    )
+    assert (
+        dispatch.execute_operation(
+            None, program, ProgramExportOperation(destination_path="/tmp/x"), monitor
+        )
+        == "e"
+    )
+    assert calls == ["analyzers", "datatype", "export"]
+
+
 def test_operation_error_and_branch_paths(monkeypatch):
     program = Program()
     monitor = Monitor()
@@ -837,6 +870,18 @@ def test_search_strings_deduplicates_overlapping_runs(monkeypatch):
     program.memory.blocks = [Block(payload=b"alpha beta!\x00\x00gap")]
     result = ops.search_strings(program, SearchStringsOperation(), Monitor())
     assert [item.value for item in result.items] == ["alpha beta!"]
+    no_match = ops.search_strings(program, SearchStringsOperation(query="absent"), Monitor())
+    assert not no_match.items
+
+    class CancelInner:
+        def __init__(self):
+            self.calls = 0
+
+        def isCancelled(self):
+            self.calls += 1
+            return self.calls > 1
+
+    ops.search_strings(program, SearchStringsOperation(), CancelInner())
 
 
 def test_search_strings_min_length_filters_short_runs(monkeypatch):
@@ -862,6 +907,24 @@ def _export_program(tmp_path, *, patched=b"XXXX_BBBB_CCCC", original=b"AAAA_BBBB
     program.memory = Memory()
     program.memory.blocks = [block]
     return program
+
+
+def test_optional_value_variants():
+    class Optional:
+        def __init__(self, present, value=None):
+            self.present = present
+            self.value = value
+
+        def isPresent(self):
+            return self.present
+
+        def get(self):
+            return self.value
+
+    assert ops._optional_value(None) is None
+    assert ops._optional_value(Optional(False, "x")) is None
+    assert ops._optional_value(Optional(True, "x")) == "x"
+    assert ops._optional_value("x") == "x"
 
 
 def test_program_export_overlays_patched_blocks(tmp_path, monkeypatch):
@@ -916,6 +979,51 @@ def test_program_export_skips_foreign_and_non_file_blocks(tmp_path, monkeypatch)
         program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
     )
     assert (tmp_path / "out.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+
+def test_program_export_uninitialized_block(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+
+    class UninitializedBlock(Block):
+        def isInitialized(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return False
+
+    program.memory.blocks = [UninitializedBlock(payload=b"ignored")]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "skip.bin")), Monitor()
+    )
+    assert (tmp_path / "skip.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+
+def test_program_export_skips_nonidentity_and_rejects_bounds(tmp_path, monkeypatch):
+    install_ghidra_modules(monkeypatch)
+    program = _export_program(tmp_path)
+    block = program.memory.blocks[0]
+
+    class OptionalNoneSource(SourceInfo):
+        def getFileBytes(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return None  # type: ignore[return-value]
+
+    class NonIdentitySource(SourceInfo):
+        def getByteMappingScheme(self):  # pyright: ignore[reportIncompatibleMethodOverride]
+            return object()  # type: ignore[return-value]
+
+    block.source_infos = [OptionalNoneSource(), NonIdentitySource()]
+    ops.program_export(
+        program, ProgramExportOperation(destination_path=str(tmp_path / "out.bin")), Monitor()
+    )
+    assert (tmp_path / "out.bin").read_bytes() == b"AAAA_BBBB_CCCC"
+
+    class OutOfBoundsSource(SourceInfo):
+        def getFileBytesOffset(self, address):
+            return 1000
+
+    block.source_infos = [OutOfBoundsSource()]
+    with pytest.raises(ops.OperationError, match="file region out of bounds"):
+        ops.program_export(
+            program, ProgramExportOperation(destination_path=str(tmp_path / "bad.bin")), Monitor()
+        )
 
 
 def test_program_export_cancelled(tmp_path, monkeypatch):
@@ -1003,7 +1111,21 @@ def test_search_strings_defined_only(monkeypatch):
         program, SearchStringsOperation(defined_only=True, query="defined"), Monitor()
     )
     assert [item.value for item in with_query.items] == ["defined string!"]
+    no_match = ops.search_strings(
+        program, SearchStringsOperation(defined_only=True, query="absent"), Monitor()
+    )
+    assert not no_match.items
     cancelled = ops.search_strings(
         program, SearchStringsOperation(defined_only=True), Monitor(cancelled=True)
     )
     assert not cancelled.items
+
+    class CancelDefined:
+        def __init__(self):
+            self.calls = 0
+
+        def isCancelled(self):
+            self.calls += 1
+            return self.calls > 2
+
+    ops.search_strings(program, SearchStringsOperation(defined_only=True), CancelDefined())

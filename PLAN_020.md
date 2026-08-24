@@ -70,14 +70,18 @@ sizes and timeouts.
 
 Add `processor` and `language_id` fields to `ProgramInfo`.
 
-## Opt-in persistence
+## Snapshot persistence
 
-### P1. `RYUUMONBUCHI_PERSISTENT_PROJECT` env
+### P1. `program_save` GZF snapshots
 
-When set, the session workspace is not deleted on MCP shutdown. Programs
-survive across restarts. Adds a `program_save` operation. Default remains
-ephemeral. Persistent projects are filesystem state outside the MCP process;
-gated explicitly and documented as an ownership boundary, not a sandbox.
+Keep session workspaces ephemeral. Add `program_save` to write a lossless
+Ghidra packed (`.gzf`) snapshot containing analysis, types, symbols, comments,
+and patches. Re-open it in a later session through the existing
+`program_import` path; Ghidra's loader auto-detects GZF.
+
+The snapshot is an explicit caller-owned artifact, written atomically and
+gated by `RYUUMONBUCHI_ALLOW_EXPORT`. No Ghidra project survives MCP shutdown,
+so process isolation and cleanup semantics remain unchanged.
 
 ## Rejected / deferred
 
@@ -90,10 +94,11 @@ gated explicitly and documented as an ownership boundary, not a sandbox.
 
 ## Release engineering
 
-- Version bump `0.1.0` → `0.2.0` in `pyproject.toml`.
+- Version bump `0.1.0` → `0.2.0` in `pyproject.toml` and `uv.lock`.
 - Add `CHANGELOG.md` documenting all changes since 0.1.0.
 - Live integration test: `test_print_flag_workflow` — import → decompile →
-  disassemble → patch → export → run patched binary → assert flag
+  analyzer discovery → data definition → patch → GZF snapshot save/import
+  roundtrip → executable export → run patched binary → assert flag
   `Alpaca{G00d_Morning_AlpacaH4ck!}`. Uses the existing `tests/print_flag`
   fixture.
 - Git tag `v0.2.0`; update README invocation from `@v0.1.0` to `@v0.2.0`.
@@ -107,5 +112,5 @@ gated explicitly and documented as an ownership boundary, not a sandbox.
 5. F5 health limits + F6 program info architecture
 6. F2 analyzers + F3 data type
 7. F4 defined strings
-8. P1 persistence (needs design discussion)
-9. Release engineering (last)
+8. P1 snapshot persistence (GZF artifacts, ephemeral projects retained)
+9. Release engineering
