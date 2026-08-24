@@ -1,7 +1,7 @@
 # Ryuumonbuchi
 maybe the headless ghidra mcp you are looking for
 
-Ryuumonbuchi connects an MCP client to headless Ghidra over stdio. Use it to import a binary, inspect functions and memory, patch bytes, or save a snapshot.
+Ryuumonbuchi is an MCP server that gives agents access to headless Ghidra. Through stdio, they can import binaries, inspect functions and memory, patch bytes, and save snapshots.
 
 Workers are disposable on purpose. Each request starts a JVM, reads the result, and tears the worker down. That keeps Ghidra state out of the parent and gives uncertain mutations a clean recovery path.
 
