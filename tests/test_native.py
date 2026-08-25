@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from ryuumonbuchi.native import NativeRunner, NativeRunError, NativeSpawnError
-from ryuumonbuchi.session import RuntimeWorkspace
 from ryuumonbuchi.config import AppConfig
+from ryuumonbuchi.native import NativeRunError, NativeRunner, NativeSpawnError
+from ryuumonbuchi.session import RuntimeWorkspace
 
 
 @pytest.fixture
@@ -32,7 +32,8 @@ def native_runner(workspace: RuntimeWorkspace, fake_ghidra: Path) -> NativeRunne
 def probe_script(tmp_path: Path) -> Path:
     """Create an executable fixture that records argv/env/cwd/stdin/stdout/stderr."""
     script = tmp_path / "probe.py"
-    script.write_text(textwrap.dedent("""\
+    script.write_text(
+        textwrap.dedent("""\
         #!/usr/bin/env python3
         import os, sys, json
         data = {
@@ -46,7 +47,8 @@ def probe_script(tmp_path: Path) -> Path:
         sys.stdout.write(json.dumps(data))
         sys.stderr.write("STDERR_MARKER\\n")
         sys.exit(0)
-    """))
+    """)
+    )
     script.chmod(0o755)
     return script
 
@@ -55,20 +57,22 @@ def probe_script(tmp_path: Path) -> Path:
 def headless_fixture(fake_ghidra: Path, probe_script: Path) -> None:
     """Install the probe as analyzeHeadless."""
     launcher = fake_ghidra / "support" / "analyzeHeadless"
-    launcher.write_text(textwrap.dedent(f"""\
+    launcher.write_text(
+        textwrap.dedent("""\
         #!/usr/bin/env python3
         import os, sys, json
-        data = {{
+        data = {
             "argv": sys.argv[1:],
             "cwd": os.getcwd(),
             "env_keys": sorted(k for k in os.environ if k.startswith("PROBE_")),
             "stdin": sys.stdin.read() if not sys.stdin.isatty() else None,
             "pid": os.getpid(),
-        }}
+        }
         sys.stdout.write("PROBE_SENTinel\\n")
         sys.stdout.write(json.dumps(data))
         sys.stderr.write("STDERR_MARKER\\n")
-    """))
+    """)
+    )
     launcher.chmod(0o755)
 
 
@@ -76,7 +80,9 @@ def test_native_spawn_error_no_launcher(workspace: RuntimeWorkspace, fake_ghidra
     """Missing analyzeHeadless raises NativeSpawnError."""
     config = AppConfig(
         ghidra_install_dir=fake_ghidra,
-        max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30,
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
     )
     runner = NativeRunner(config=config, workspace=workspace)
     # Remove the launcher
@@ -92,6 +98,7 @@ def test_native_argv_byte_for_byte(native_runner: NativeRunner, headless_fixture
     )
     assert result.exit_code == 0
     import json
+
     lines = result.stdout.split("\n") if result.stdout else []
     data = json.loads(lines[1]) if len(lines) > 1 else {}
     assert data["argv"] == ["-import", "/path with spaces/file.bin", "-postScript", "Script.py"]
@@ -105,12 +112,15 @@ def test_native_environment_overlay(native_runner: NativeRunner, headless_fixtur
     )
     assert result.exit_code == 0
     import json
+
     lines = result.stdout.split("\n") if result.stdout else []
     data = json.loads(lines[1]) if len(lines) > 1 else {}
     assert "PROBE_KEY" in data["env_keys"]
 
 
-def test_native_working_directory(native_runner: NativeRunner, headless_fixture: None, tmp_path: Path) -> None:
+def test_native_working_directory(
+    native_runner: NativeRunner, headless_fixture: None, tmp_path: Path
+) -> None:
     """Working directory is respected."""
     result = native_runner.run(
         arguments=["test"],
@@ -118,6 +128,7 @@ def test_native_working_directory(native_runner: NativeRunner, headless_fixture:
     )
     assert result.exit_code == 0
     import json
+
     lines = result.stdout.split("\n") if result.stdout else []
     data = json.loads(lines[1]) if len(lines) > 1 else {}
     assert data["cwd"] == str(tmp_path)
@@ -131,6 +142,7 @@ def test_native_stdin_piped(native_runner: NativeRunner, headless_fixture: None)
     )
     assert result.exit_code == 0
     import json
+
     lines = result.stdout.split("\n") if result.stdout else []
     data = json.loads(lines[1]) if len(lines) > 1 else {}
     assert data["stdin"] == "hello stdin"
@@ -180,6 +192,7 @@ def test_native_no_persistent_backend_pid_change(
     result2 = native_runner.run(arguments=["test"])
     # Each run is a fresh process
     import json
+
     lines1 = result1.stdout.split("\n") if result1.stdout else []
     lines2 = result2.stdout.split("\n") if result2.stdout else []
     data1 = json.loads(lines1[1]) if len(lines1) > 1 else {}
@@ -196,7 +209,9 @@ def test_native_timeout(native_runner: NativeRunner, fake_ghidra: Path) -> None:
         native_runner.run(arguments=["test"], timeout_seconds=2)
 
 
-def test_native_ghidra_install_dir_forced(native_runner: NativeRunner, headless_fixture: None, fake_ghidra: Path) -> None:
+def test_native_ghidra_install_dir_forced(
+    native_runner: NativeRunner, headless_fixture: None, fake_ghidra: Path
+) -> None:
     """GHIDRA_INSTALL_DIR is forced in the child environment."""
     result = native_runner.run(arguments=["test"])
     assert result.exit_code == 0

@@ -6,11 +6,9 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false, reportUndefinedVariable=false
-
 import asyncio
 import json
 from pathlib import Path
-
 
 from ryuumonbuchi.catalog import TOOL_BY_NAME, TOOL_SPECS
 from ryuumonbuchi.config import AppConfig
@@ -20,8 +18,8 @@ from ryuumonbuchi.server import (
     ServerState,
     _dispatch_tool,
     _error_result,
-    _summarize,
     _success_result,
+    _summarize,
     _to_jsonable,
     create_server,
     main,
@@ -44,7 +42,9 @@ def _make_state(workspace: RuntimeWorkspace, fake_ghidra: Path) -> ServerState:
 def test_create_server_returns_server(fake_ghidra: Path) -> None:
     config = AppConfig(
         ghidra_install_dir=fake_ghidra,
-        max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30,
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
     )
     server = create_server(config)
     assert server is not None

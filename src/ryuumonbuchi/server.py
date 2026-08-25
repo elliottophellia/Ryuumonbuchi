@@ -53,6 +53,7 @@ def _is_export_tool(tool_name: str) -> bool:
 @dataclass(slots=True)
 class ServerState:
     """Mutable process state scoped to one MCP lifespan."""
+
     config: AppConfig
     workspace: RuntimeWorkspace
     worker: PersistentWorker
@@ -80,9 +81,7 @@ async def server_lifespan(
 def create_server(config: AppConfig) -> Server[ServerState]:
     """Build a fresh MCP server with the 216-tool dynamic registry."""
 
-    async def on_list_tools(
-        ctx: Any, params: Any | None
-    ) -> mcp_types.ListToolsResult:
+    async def on_list_tools(ctx: Any, params: Any | None) -> mcp_types.ListToolsResult:
         tools: list[mcp_types.Tool] = []
         for spec in TOOL_SPECS:
             annotations = mcp_types.ToolAnnotations(
@@ -90,12 +89,14 @@ def create_server(config: AppConfig) -> Server[ServerState]:
                 destructive_hint=spec.destructive,
                 open_world_hint=spec.open_world,
             )
-            tools.append(mcp_types.Tool(
-                name=spec.name,
-                description=spec.description,
-                input_schema=spec.input_schema,
-                annotations=annotations,
-            ))
+            tools.append(
+                mcp_types.Tool(
+                    name=spec.name,
+                    description=spec.description,
+                    input_schema=spec.input_schema,
+                    annotations=annotations,
+                )
+            )
         tools.sort(key=lambda t: t.name)
         return mcp_types.ListToolsResult(tools=tools)
 
@@ -107,7 +108,10 @@ def create_server(config: AppConfig) -> Server[ServerState]:
         arguments = dict(params.arguments) if params.arguments else {}
         content = await _dispatch_tool(state, name, arguments)
         is_error = any(
-            isinstance(c, mcp_types.TextContent) and c.text.startswith(("invalid_params:", "ghidra_error:", "worker_", "native_spawn_failed:"))
+            isinstance(c, mcp_types.TextContent)
+            and c.text.startswith(
+                ("invalid_params:", "ghidra_error:", "worker_", "native_spawn_failed:")
+            )
             for c in content
         )
         return mcp_types.CallToolResult(content=content, is_error=is_error)
@@ -162,7 +166,7 @@ async def _dispatch_tool(
                     f"import payload {len(decoded)} bytes exceeds "
                     f"max_import_bytes {state.config.max_import_bytes}",
                 )
- 
+
     # Server-side tools that don't go through the worker
     if tool_name == "health.ping":
         return await _handle_health_ping(state)
@@ -197,13 +201,13 @@ def _success_result(tool_name: str, result: Any) -> list[mcp_types.ContentBlock]
     structured = _to_jsonable(result)
     return [
         mcp_types.TextContent(type="text", text=text),
-        mcp_types.TextContent(type="text", text=json.dumps(structured, default=str, ensure_ascii=False)),
+        mcp_types.TextContent(
+            type="text", text=json.dumps(structured, default=str, ensure_ascii=False)
+        ),
     ]
 
 
-def _error_result(
-    code: str, message: str, *, log_tail: str = ""
-) -> list[mcp_types.ContentBlock]:
+def _error_result(code: str, message: str, *, log_tail: str = "") -> list[mcp_types.ContentBlock]:
     """Build an error response."""
     text = f"{code}: {message}"
     if log_tail:
@@ -268,8 +272,13 @@ async def _handle_health_ping(state: ServerState) -> list[mcp_types.ContentBlock
 def _handle_response_format() -> list[mcp_types.ContentBlock]:
     """Explain the text/structured split and spill paths."""
     result = {
-        "format": "Each tool returns a TextContent with a compact summary and a second TextContent with the full JSON result. When a result exceeds max_response_bytes, the worker writes it to a spill file under the runtime workspace runs/ directory and returns a spill envelope with result_path, preview, and total_bytes.",
-
+        "format": (
+            "Each tool returns a TextContent with a compact summary and a second "
+            "TextContent with the full JSON result. When a result exceeds "
+            "max_response_bytes, the worker writes it to a spill file under the "
+            "runtime workspace runs/ directory and returns a spill envelope with "
+            "result_path, preview, and total_bytes."
+        ),
     }
     return _success_result("mcp.response_format", result)
 
@@ -352,9 +361,7 @@ def main(config: AppConfig) -> None:
             await server.run(
                 read_stream,
                 write_stream,
-                server.create_initialization_options(
-                    notification_options=NotificationOptions()
-                ),
+                server.create_initialization_options(notification_options=NotificationOptions()),
             )
 
     anyio.run(run)

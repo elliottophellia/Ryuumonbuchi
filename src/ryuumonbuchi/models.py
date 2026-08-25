@@ -59,8 +59,6 @@ class BackendConfig:
         }
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class BootstrapMessage:
     """Initial parent-to-child message with runtime configuration."""
@@ -254,6 +252,7 @@ def read_frame(sock: socket) -> dict[str, Any] | None:
 async def async_read_exact(loop: asyncio.AbstractEventLoop, sock: socket, n: int) -> bytes | None:
     """Async read exactly n bytes from a socket using the event loop."""
     import asyncio as _asyncio
+
     buf = bytearray()
     while len(buf) < n:
         remaining = n - len(buf)
@@ -285,8 +284,11 @@ async def async_read_frame(loop: asyncio.AbstractEventLoop, sock: socket) -> dic
     return parse_message(body)
 
 
-async def async_send_frame(loop: asyncio.AbstractEventLoop, sock: socket, payload: dict[str, Any]) -> None:
+async def async_send_frame(
+    loop: asyncio.AbstractEventLoop, sock: socket, payload: dict[str, Any]
+) -> None:
     """Async send one complete framed message."""
     import asyncio as _asyncio
+
     data = frame_message(payload)
     await _asyncio.wait_for(loop.sock_sendall(sock, data), timeout=60)

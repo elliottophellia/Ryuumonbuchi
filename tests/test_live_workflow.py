@@ -84,9 +84,7 @@ def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Pat
                     assert isinstance(functions, dict)
                     assert functions["count"] >= 1
                     main_entry = next(
-                        f["entry_point"]
-                        for f in functions["items"]
-                        if f.get("name") == "main"
+                        f["entry_point"] for f in functions["items"] if f.get("name") == "main"
                     )
 
                     decompiled = await _call(
@@ -128,9 +126,7 @@ def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Pat
     assert out.exists()
 
 
-def test_live_writable_mutation_undo_batch_rollback(
-    tmp_path: Path, live_ghidra: Path
-) -> None:
+def test_live_writable_mutation_undo_batch_rollback(tmp_path: Path, live_ghidra: Path) -> None:
     async def run() -> None:
         server = create_server(_config(live_ghidra))
         init_options = server.create_initialization_options()
@@ -217,9 +213,7 @@ def test_live_patch_nop_and_branch_invert(tmp_path: Path, live_ghidra: Path) -> 
 
                     functions = await _call(client, "function.list", {"session_id": session_id})
                     main_entry = next(
-                        f["entry_point"]
-                        for f in functions["items"]
-                        if f.get("name") == "main"
+                        f["entry_point"] for f in functions["items"] if f.get("name") == "main"
                     )
                     disasm = await _call(
                         client,

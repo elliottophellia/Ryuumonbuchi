@@ -31,9 +31,7 @@ def _config(fake_ghidra: Path) -> AppConfig:
     )
 
 
-def test_worker_spawn_status_shutdown_restart(
-    fake_ghidra: Path, tmp_path: Path
-) -> None:
+def test_worker_spawn_status_shutdown_restart(fake_ghidra: Path, tmp_path: Path) -> None:
     async def run() -> None:
         workspace = RuntimeWorkspace.create(base=tmp_path)
         try:

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false
-
 from pathlib import Path
 
 import pytest
@@ -93,7 +92,9 @@ def test_limit_value_non_integer_env(fake_ghidra: Path, monkeypatch: pytest.Monk
         build_config(ghidra_install_dir=str(fake_ghidra), environ=dict(__import__("os").environ))
 
 
-def test_env_class_files(fake_ghidra: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_class_files(
+    fake_ghidra: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cf = tmp_path / "Test.class"
     cf.touch()
     monkeypatch.setenv("RYUUMONBUCHI_CLASS_FILES", str(cf))
@@ -176,8 +177,7 @@ def test_validate_ghidra_missing_version(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.java.min=21\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.java.min=21\napplication.python.supported=3.13,3.12\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -205,9 +205,7 @@ def test_validate_ghidra_python_unsupported(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.version=12.0.4\n"
-        "application.java.min=21\n"
-        "application.python.supported=3.12\n",
+        "application.version=12.0.4\napplication.java.min=21\napplication.python.supported=3.12\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -220,8 +218,7 @@ def test_validate_ghidra_missing_python_supported(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.version=12.0.4\n"
-        "application.java.min=21\n",
+        "application.version=12.0.4\napplication.java.min=21\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()

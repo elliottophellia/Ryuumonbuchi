@@ -25,7 +25,7 @@ _SPILL_PREFIX_BYTES = 256 * 1024  # 256 KiB preview
 
 # Inherited IPC socket, wrapped from the fd passed by the parent via
 # RYUUMONBUCHI_WORKER_FD. Set once in main(); none before initialization.
-_SOCK: socket.socket | None = None
+_sock: socket.socket | None = None
 
 
 def _build_config(raw: dict[str, Any]) -> BackendConfig:
@@ -109,12 +109,12 @@ def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
 _max_response_bytes_configured = _MAX_RESPONSE_BYTES
 
 
-
-
 def _send_response(payload: dict[str, Any]) -> None:
-    assert _SOCK is not None, "worker socket not initialized"
+    if _sock is None:
+        msg = "worker socket not initialized"
+        raise AssertionError(msg)
     data = frame_message(payload)
-    _SOCK.sendall(data)
+    _sock.sendall(data)
 
 
 def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> None:
@@ -139,6 +139,7 @@ def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> 
             "result": jsonable,
         }
     _send_response(response)
+
 
 def _send_error(request_id: str, code: str, message: str, **extra: Any) -> None:
     error: dict[str, Any] = {"code": code, "message": message}
@@ -168,9 +169,7 @@ def _validate_arguments(spec: Any, arguments: dict[str, Any]) -> None:
     import jsonschema
 
     try:
-        jsonschema.validate(
-            arguments, spec.input_schema, cls=jsonschema.Draft202012Validator
-        )
+        jsonschema.validate(arguments, spec.input_schema, cls=jsonschema.Draft202012Validator)
     except jsonschema.ValidationError as exc:
         raise GhidraBackendError(f"argument validation failed: {exc.message}") from exc
 
@@ -261,17 +260,17 @@ def main() -> int:
         return 1
     sock_fd = int(sock_fd_raw)
     os.set_blocking(sock_fd, True)
-    global _SOCK
-    _SOCK = socket.socket(fileno=sock_fd)
+    global _sock
+    _sock = socket.socket(fileno=sock_fd)
 
     # Read bootstrap frame
-    header = read_exact(_SOCK, 8)
+    header = read_exact(_sock, 8)
     if header is None or len(header) < 8:
         return 1
     import struct
 
     (length,) = struct.unpack(">Q", header)
-    body = read_exact(_SOCK, length)
+    body = read_exact(_sock, length)
     if body is None or len(body) < length:
         return 1
     bootstrap = parse_message(body)
@@ -292,7 +291,7 @@ def main() -> int:
     # Frame loop
     while True:
         try:
-            header = read_exact(_SOCK, 8)
+            header = read_exact(_sock, 8)
         except OSError:
             break
         if header is None or len(header) < 8:
@@ -301,7 +300,7 @@ def main() -> int:
         (length,) = struct.unpack(">Q", header)
         if length == 0:
             continue
-        body = read_exact(_SOCK, length)
+        body = read_exact(_sock, length)
         if body is None or len(body) < length:
             break
 

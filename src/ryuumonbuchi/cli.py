@@ -25,16 +25,39 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-import-bytes", type=int, metavar="BYTES")
     parser.add_argument("--max-response-bytes", type=int, metavar="BYTES")
     parser.add_argument("--max-log-tail-bytes", type=int, metavar="BYTES")
-    parser.add_argument("--classpath", action="append", default=[], metavar="PATH",
-                        help="additional Java classpath entry (repeatable)")
-    parser.add_argument("--class-file", action="append", default=[], metavar="PATH",
-                        help="additional Java class file to load (repeatable)")
-    parser.add_argument("--allow-export", action="store_true", default=None,
-                        help="enable filesystem export/save tools (default: deny)")
-    parser.add_argument("--allow-import-bytes", action="store_true", default=None,
-                        help="enable program.open_bytes byte import (default: deny)")
-    parser.add_argument("--vmarg", action="append", default=[], metavar="ARG",
-                        help="additional JVM argument (repeatable)")
+    parser.add_argument(
+        "--classpath",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="additional Java classpath entry (repeatable)",
+    )
+    parser.add_argument(
+        "--class-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="additional Java class file to load (repeatable)",
+    )
+    parser.add_argument(
+        "--allow-export",
+        action="store_true",
+        default=None,
+        help="enable filesystem export/save tools (default: deny)",
+    )
+    parser.add_argument(
+        "--allow-import-bytes",
+        action="store_true",
+        default=None,
+        help="enable program.open_bytes byte import (default: deny)",
+    )
+    parser.add_argument(
+        "--vmarg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="additional JVM argument (repeatable)",
+    )
     parser.add_argument("--version", action="store_true", help="print the package version and exit")
     return parser
 

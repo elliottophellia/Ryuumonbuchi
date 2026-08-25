@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownVariableType=false
-
 from pathlib import Path
 
 import pytest
