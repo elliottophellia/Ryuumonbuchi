@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import select
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,6 +31,9 @@ _INHERITED_ENV_KEYS: tuple[str, ...] = (
 
 # Maximum inline output per stream before truncation
 _MAX_INLINE_OUTPUT = 1 * 1024 * 1024  # 1 MiB
+
+# Hard bound on the SIGTERM -> SIGKILL escalation.
+_KILL_GRACE_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,17 +108,14 @@ class NativeRunner:
         timeout_seconds: int | None = None,
     ) -> NativeResult:
         """Invoke analyzeHeadless directly and capture complete output."""
-
         ghidra_dir = str(self.config.ghidra_install_dir)
         launcher = Path(ghidra_dir) / "support" / "analyzeHeadless"
         if not launcher.exists():
             msg = f"analyzeHeadless not found at {launcher}"
             raise NativeSpawnError(msg)
 
-        # Build the exact argv: launcher + caller arguments
         argv = [str(launcher)] + list(arguments)
 
-        # Build environment: filtered inherited keys, then explicit overlay, then force GHIDRA_INSTALL_DIR
         env: dict[str, str] = {}
         for key in _INHERITED_ENV_KEYS:
             val = os.environ.get(key)
@@ -123,16 +125,13 @@ class NativeRunner:
             env.update(environment)
         env["GHIDRA_INSTALL_DIR"] = ghidra_dir
 
-        # Resolve working directory
         cwd = working_directory or str(Path.cwd())
 
-        # Compute deadline
-        deadline = (
+        timeout_seconds = (
             timeout_seconds if timeout_seconds is not None
             else self.config.operation_timeout_seconds
         )
 
-        # Allocate capture files under workspace runs/
         stdout_path = self.workspace.new_run_file(prefix="native-stdout-", suffix=".log")
         stderr_path = self.workspace.new_run_file(prefix="native-stderr-", suffix=".log")
         terminal_path: Path | None = None
@@ -140,21 +139,26 @@ class NativeRunner:
             terminal_path = self.workspace.new_run_file(prefix="native-terminal-", suffix=".log")
 
         start_time = time.monotonic()
-
         try:
             if terminal:
-                assert terminal_path is not None
-                result = self._run_terminal(argv, env, cwd, stdin_text, terminal_path, deadline)
+                if terminal_path is None:
+                    message = "terminal capture path unavailable"
+                    raise NativeSpawnError(message)
+                returncode = self._run_terminal(
+                    argv, env, cwd, stdin_text, terminal_path, timeout_seconds
+                )
             else:
-                result = self._run_piped(argv, env, cwd, stdin_text, stdout_path, stderr_path, deadline)
-        except subprocess.TimeoutExpired:
-            elapsed = time.monotonic() - start_time
-            msg = f"native headless run timed out after {deadline}s"
-            raise NativeTimeoutError(msg) from None
+                returncode = self._run_piped(
+                    argv, env, cwd, stdin_text, stdout_path, stderr_path, timeout_seconds
+                )
+        except NativeRunError:
+            raise
+        except OSError as exc:
+            message = f"failed to start analyzeHeadless: {exc}"
+            raise NativeSpawnError(message) from exc
 
         elapsed = time.monotonic() - start_time
 
-        # Read and truncate captured output
         stdout_content, stdout_trunc = self._read_capture(stdout_path if not terminal else None)
         stderr_content, stderr_trunc = self._read_capture(stderr_path if not terminal else None)
         terminal_content, terminal_trunc = self._read_capture(terminal_path)
@@ -163,7 +167,7 @@ class NativeRunner:
             arguments=list(arguments),
             working_directory=working_directory,
             terminal=terminal,
-            exit_code=result.returncode,
+            exit_code=returncode,
             duration_seconds=round(elapsed, 3),
             stdout=stdout_content,
             stderr=stderr_content,
@@ -176,6 +180,53 @@ class NativeRunner:
             terminal_output_truncated=terminal_trunc,
         )
 
+    def _launch(
+        self,
+        argv: list[str],
+        env: dict[str, str],
+        cwd: str,
+        *,
+        stdin_target: int | None,
+        stdout_target: int | None,
+        stderr_target: int | None,
+    ) -> subprocess.Popen[bytes]:
+        """Spawn analyzeHeadless in its own session/process group."""
+        return subprocess.Popen(  # noqa: S603
+            argv,
+            env=env,
+            cwd=cwd,
+            stdin=stdin_target if stdin_target is not None else subprocess.PIPE,
+            stdout=stdout_target if stdout_target is not None else subprocess.PIPE,
+            stderr=stderr_target if stderr_target is not None else subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    def _terminate_group(self, proc: subprocess.Popen[bytes] | None) -> None:
+        """Send TERM then KILL to the process group and reap the leader."""
+        from contextlib import suppress
+
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return
+        with suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        try:
+            proc.wait(timeout=_KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            with suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            with suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=_KILL_GRACE_SECONDS)
+
+    @staticmethod
+    def _close_fd(fd: int) -> None:
+        from contextlib import suppress
+
+        if fd >= 0:
+            with suppress(OSError):
+                os.close(fd)
+
     def _run_piped(
         self,
         argv: list[str],
@@ -184,22 +235,40 @@ class NativeRunner:
         stdin_text: str | None,
         stdout_path: Path,
         stderr_path: Path,
-        deadline: int,
-    ) -> subprocess.CompletedProcess[bytes]:
-        """Run with piped stdout/stderr, writing to capture files."""
+        timeout_seconds: int,
+    ) -> int:
         stdin_data = stdin_text.encode("utf-8") if stdin_text is not None else None
-        with stdout_path.open("wb") as stdout_f, stderr_path.open("wb") as stderr_f:
-            return subprocess.run(  # noqa: S603
+
+        stdout_fd = os.open(str(stdout_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        stderr_fd = os.open(str(stderr_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        proc: subprocess.Popen[bytes] | None = None
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            proc = self._launch(
                 argv,
-                env=env,
-                cwd=cwd,
-                stdout=stdout_f,
-                stderr=stderr_f,
-                input=stdin_data,
-                timeout=deadline,
-                start_new_session=True,
-                check=False,
+                env,
+                cwd,
+                stdin_target=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+                stdout_target=stdout_fd,
+                stderr_target=stderr_fd,
             )
+            if stdin_data is not None and proc.stdin is not None:
+                proc.stdin.write(stdin_data)
+                proc.stdin.close()
+
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    message = f"native headless run timed out after {timeout_seconds}s"
+                    raise NativeTimeoutError(message)
+                try:
+                    proc.wait(timeout=min(remaining, 1.0))
+                except subprocess.TimeoutExpired:
+                    continue
+                return proc.returncode
+        except NativeTimeoutError:
+            self._terminate_group(proc)
+            raise
 
     def _run_terminal(
         self,
@@ -208,36 +277,36 @@ class NativeRunner:
         cwd: str,
         stdin_text: str | None,
         terminal_path: Path,
-        deadline: int,
-    ) -> subprocess.CompletedProcess[bytes]:
-        """Run with a PTY, merging stdout/stderr into the terminal capture file."""
+        timeout_seconds: int,
+    ) -> int:
         import pty
 
         master_fd, slave_fd = pty.openpty()
+        proc: subprocess.Popen[bytes] | None = None
+        deadline = time.monotonic() + timeout_seconds
         try:
             with terminal_path.open("wb") as term_f:
-                proc = subprocess.Popen(  # noqa: S603
+                proc = self._launch(
                     argv,
-                    env=env,
-                    cwd=cwd,
-                    stdin=slave_fd if stdin_text is None else subprocess.PIPE,
-                    stdout=slave_fd,
-                    stderr=slave_fd,
-                    start_new_session=True,
-                    close_fds=True,
+                    env,
+                    cwd,
+                    stdin_target=subprocess.PIPE if stdin_text is not None else slave_fd,
+                    stdout_target=slave_fd,
+                    stderr_target=slave_fd,
                 )
-                os.close(slave_fd)
+                self._close_fd(slave_fd)
                 slave_fd = -1
 
                 if stdin_text is not None and proc.stdin is not None:
                     proc.stdin.write(stdin_text.encode("utf-8"))
                     proc.stdin.close()
 
-                # Read from master and write to file
-                import select
-
                 while True:
-                    ready, _, _ = select.select([master_fd], [], [], 1.0)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        message = f"native headless run timed out after {timeout_seconds}s"
+                        raise NativeTimeoutError(message)
+                    ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
                     if master_fd in ready:
                         try:
                             data = os.read(master_fd, 4096)
@@ -249,14 +318,18 @@ class NativeRunner:
                     if proc.poll() is not None and not ready:
                         break
 
-                proc.wait(timeout=deadline)
-                return subprocess.CompletedProcess(
-                    args=argv, returncode=proc.returncode, stdout=b"", stderr=b""
-                )
+                proc.wait(timeout=deadline - time.monotonic())
+                return proc.returncode
+        except NativeTimeoutError:
+            self._terminate_group(proc)
+            raise
+        except (OSError, ValueError):
+            self._terminate_group(proc)
+            message = "native terminal read failed"
+            raise NativeRunError(message) from None
         finally:
-            if slave_fd >= 0:
-                os.close(slave_fd)
-            os.close(master_fd)
+            self._close_fd(slave_fd)
+            self._close_fd(master_fd)
 
     def _read_capture(self, path: Path | None) -> tuple[str | None, bool]:
         """Read a capture file, truncating to max_log_tail_bytes inline."""
