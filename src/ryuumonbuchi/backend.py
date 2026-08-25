@@ -2515,7 +2515,8 @@ class GhidraBackend:
             raise GhidraBackendError(f"destination already exists: {dest}")
         if dest.exists() and dest.is_dir():
             raise GhidraBackendError(f"destination is a directory: {dest}")
-        tmp_name, final_name = self._export_stage_file(dest)
+        tmp_name = self._reserve_unique_path(dest)
+        final_name = str(dest)
         try:
             record.program.saveToPackedFile(
                 File(tmp_name),
@@ -2534,6 +2535,56 @@ class GhidraBackend:
             "destination_path": final_name,
             "size": dest.stat().st_size,
         }
+
+    def _reject_unsafe_export_target(self, dest: Path) -> None:
+        """Reject destinations that are symlinks or inside a symlinked parent."""
+        resolved = dest.resolve(strict=False)
+        for part in [*resolved.parents, resolved]:
+            if part.is_symlink():
+                raise GhidraBackendError(
+                    f"refusing to export through a symlink path: {dest}"
+                )
+
+    def _export_stage_file(self, dest: Path) -> tuple[str, str]:
+        """Stage to a unique mode-0600 sibling, return (tmp, final) paths."""
+        parent = dest.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{dest.name}.",
+            suffix=".tmp",
+            dir=str(parent),
+        )
+        os.close(fd)
+        os.chmod(tmp_name, 0o600)
+        return tmp_name, str(dest)
+
+    def _reserve_unique_path(self, dest: Path) -> str:
+        """Reserve a unique sibling path that does NOT yet exist."""
+        parent = dest.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(1000):
+            candidate = parent / f".{dest.name}.{uuid4().hex}.gzf"
+            if not candidate.exists():
+                return str(candidate)
+        raise GhidraBackendError("failed to allocate a unique export path")
+
+
+
+    def _export_publish(self, tmp_name: str, dest: Path, *, overwrite: bool) -> None:
+        """Atomically publish a staged file, never pre-unlinking the target."""
+        if dest.exists() or dest.is_symlink():
+            if not overwrite:
+                os.unlink(tmp_name)
+                raise GhidraBackendError(f"destination already exists: {dest}")
+            if dest.is_dir():
+                os.unlink(tmp_name)
+                raise GhidraBackendError(f"destination is a directory: {dest}")
+        try:
+            os.replace(tmp_name, str(dest))
+        except OSError:
+            with suppress(OSError):
+                os.unlink(tmp_name)
+            raise
 
     def project_file_delete(
         self,
@@ -2562,10 +2613,6 @@ class GhidraBackend:
             "path": path,
             "deleted": True,
         }
-
-
-
-
 
     def bookmark_add(
         self,
