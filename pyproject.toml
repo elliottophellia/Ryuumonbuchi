@@ -56,7 +56,6 @@ select = ["E", "F", "I", "ANN", "B", "EM", "PERF", "PTH", "S", "SIM", "UP"]
 "src/ryuumonbuchi/worker/*.py" = ["ANN401", "EM101", "EM102", "S105"]
 "src/ryuumonbuchi/server.py" = ["ANN401", "EM101", "EM102", "UP047"]
 "src/ryuumonbuchi/backend_*.py" = ["ANN401", "EM101", "EM102"]
-"src/ryuumonbuchi/backend.py" = ["ANN401", "EM101", "EM102"]
 "src/ryuumonbuchi/catalog.py" = ["S101"]
 
 [tool.ruff.format]
