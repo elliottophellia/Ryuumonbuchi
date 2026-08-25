@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `AGENTS.md` contributor instructions and `skills/SKILL.md` agent operating guide.
+
+### Changed
+
+- Rewrote `README.md` from the source, tests, packaging metadata, and release history.
+- Reconstructed the `0.3.0`, `0.2.0`, and `0.1.0` release history below.
+
+## 0.3.0 - 2026-08-25
+
+### Added
+
+- 216 dotted tool names backed by 212 one-to-one backend methods.
+- Persistent protocol-v2 worker child with 8-byte length-prefixed socket IPC.
+- Native `analyzeHeadless` runner with exact argv and its own process group.
+- Multi-program/project session surface.
+- Raw Ghidra bridges: `ghidra.call`, `ghidra.eval`, `ghidra.script`.
+- Transaction, task, and batch support, including atomic `operation.batch`.
+- Strict schemas that reject extra properties and bound arrays, pages, and payloads.
+
+### Changed
+
+- Switched from one-shot workers to one persistent child per MCP lifespan.
+- Linux, Python 3.13, and Ghidra 12+ with Java 21+ are now validated at startup.
+- Import and export are default-deny behind `RYUUMONBUCHI_ALLOW_EXPORT` and `RYUUMONBUCHI_ALLOW_IMPORT_BYTES`.
+
+### Fixed
+
+- Inherited worker FD and framing cleanup on failure paths.
+- `patch.nop` on x86.
+- Atomic no-clobber and symlink-safe exports.
+- Native process-group timeout handling.
+- Batch and mutation validation, plus spill-envelope handling.
+
 ## 0.2.0 - 2026-08-24
 
 ### Added
@@ -21,6 +58,13 @@
 - Filesystem-writing tools are controlled by `RYUUMONBUCHI_ALLOW_EXPORT`.
 - Byte imports are controlled by `RYUUMONBUCHI_ALLOW_IMPORT_BYTES` and bounded by `RYUUMONBUCHI_MAX_IMPORT_BYTES` (64 MiB default).
 
-### Deferred
+## 0.1.0 - 2026-08-24
 
-- Dynamic execution/emulation, warm worker pools, GUI controls, arbitrary scripts, and network transport remain out of scope.
+### Added
+
+- Validated ephemeral session workspaces.
+- One-shot isolated workers.
+- Typed analysis and editing tools.
+- Stdio CLI.
+- Bounded schemas.
+- First non-live and live test split.
