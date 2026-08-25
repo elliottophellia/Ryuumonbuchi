@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://cdn.rei.my.id/images/Ryuumonbuchi.png" alt="Ryuumonbuchi" />
+
 # Ryuumonbuchi
 
 **Maybe the headless Ghidra MCP you are looking for.**
@@ -9,7 +11,7 @@
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
 
-A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the full [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents &mdash; decompilation, disassembly, type recovery, patching, scripting, and more &mdash; through a persistent, isolated worker process.
+A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the full [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents: decompilation, disassembly, type recovery, patching, scripting, and more, through a persistent, isolated worker process.
 
 [Overview](#overview) &middot; [Architecture](#architecture) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage)
 
@@ -17,19 +19,19 @@ A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that
 
 ## Overview
 
-Ryuumonbuchi turns Ghidra into an MCP tool server. An LLM agent connects over stdio, opens a binary, and drives every stage of static analysis &mdash; from auto-analysis and decompilation to struct reconstruction, patching, and project export &mdash; through typed tool calls instead of screen-scraping the Ghidra GUI or hand-rolling analyzeHeadless scripts.
+Ryuumonbuchi turns Ghidra into an MCP tool server. An LLM agent connects over stdio, opens a binary, and drives every stage of static analysis, from auto-analysis and decompilation to struct reconstruction, patching, and project export, through typed tool calls instead of screen-scraping the Ghidra GUI or hand-rolling analyzeHeadless scripts.
 
 It speaks the **low-level MCP SDK** (`mcp.server.lowlevel`) with a dynamic 216-tool registry generated from a single authoritative catalog. Behind the MCP front-end, a **persistent worker child** holds one live PyGhidra/JVM session for the entire MCP lifespan, so repeated calls reuse the warmed-up backend instead of paying JVM startup on every request.
 
 ### Highlights
 
 - **216 tools** spanning program/session management, analysis, listing, decompilation, p-code, functions, symbols, memory, types, references, search, graphs, comments, bookmarks, tags, patches, transactions, tasks, external libraries, source maps, equates, and projects.
-- **Persistent isolated worker** &mdash; one private PyGhidra process per MCP connection, reused across calls, torn down on disconnect.
-- **Atomic batches** &mdash; 1&ndash;32 program-bound operations in a single transaction with rollback on error.
-- **Native `analyzeHeadless` runner** with exact argv, no shell, no normalization &mdash; for batch headless workflows that don't need a live session.
+- **Persistent isolated worker**: one private PyGhidra process per MCP connection, reused across calls, torn down on disconnect.
+- **Atomic batches**: 1 to 32 program-bound operations in a single transaction with rollback on error.
+- **Native `analyzeHeadless` runner** with exact argv, no shell, no normalization, for batch headless workflows that don't need a live session.
 - **Private mode-0700 workspace** per process; projects stay ephemeral, persistence is caller-owned `.gzf` snapshots.
-- **Open-world escape hatches** &mdash; `ghidra.call`, `ghidra.eval`, and `ghidra.script` reach the live Ghidra Java/Python runtime when the typed surface isn't enough.
-- **Fail-fast validation** &mdash; Ghidra installation is checked at startup before the MCP loop begins.
+- **Open-world escape hatches**: `ghidra.call`, `ghidra.eval`, and `ghidra.script` reach the live Ghidra Java/Python runtime when the typed surface isn't enough.
+- **Fail-fast validation**: Ghidra installation is checked at startup before the MCP loop begins.
 
 ## Architecture
 
@@ -59,9 +61,9 @@ It speaks the **low-level MCP SDK** (`mcp.server.lowlevel`) with a dynamic 216-t
 
 **Three dispatch paths:**
 
-1. **Worker tools** (212) &mdash; validated against the catalog schema, sent to the persistent child over an 8-byte length-prefixed frame protocol, executed against a live Ghidra program session.
-2. **`headless.run`** &mdash; spawns `analyzeHeadless` directly with exact argv in a child process group; full FS/process/network access by default.
-3. **`operation.batch`** &mdash; 1&ndash;32 worker tools executed atomically; read-only batches run without a transaction, mutating batches wrap in one undo transaction with rollback on error.
+1. **Worker tools** (212): validated against the catalog schema, sent to the persistent child over an 8-byte length-prefixed frame protocol, executed against a live Ghidra program session.
+2. **`headless.run`**: spawns `analyzeHeadless` directly with exact argv in a child process group; full FS/process/network access by default.
+3. **`operation.batch`**: 1 to 32 worker tools executed atomically; read-only batches run without a transaction, mutating batches wrap in one undo transaction with rollback on error.
 
 Every tool response carries a compact text summary plus the full structured payload (JSON). Large results spill to mode-0600 files under the private workspace and are referenced by path.
 
@@ -101,15 +103,15 @@ Precedence is **CLI flag &gt; environment variable &gt; built-in default**.
 | CLI flag | Environment variable | Default | Description |
 |---|---|---|---|
 | `--ghidra-install-dir PATH` | `GHIDRA_INSTALL_DIR` | `/usr/share/ghidra` | Ghidra installation root |
-| `--max-heap-mb MIB` | `RYUUMONBUCHI_MAX_HEAP_MB` | `1024` | Worker JVM max heap (256&ndash;8192) |
-| `--max-cpu COUNT` | `RYUUMONBUCHI_MAX_CPU` | `2` | Worker CPU affinity core count (1&ndash;64) |
+| `--max-heap-mb MIB` | `RYUUMONBUCHI_MAX_HEAP_MB` | `1024` | Worker JVM max heap (256 to 8192) |
+| `--max-cpu COUNT` | `RYUUMONBUCHI_MAX_CPU` | `2` | Worker CPU affinity core count (1 to 64) |
 | `--operation-timeout-seconds SECONDS` | `RYUUMONBUCHI_OPERATION_TIMEOUT_SECONDS` | `900` | Per-operation wall-clock deadline |
 | `--max-import-bytes BYTES` | `RYUUMONBUCHI_MAX_IMPORT_BYTES` | `67108864` | Cap on `program.open_bytes` payloads |
 | `--max-response-bytes BYTES` | `RYUUMONBUCHI_MAX_RESPONSE_BYTES` | `4194304` | Inline response cap before spill-to-file |
 | `--max-log-tail-bytes BYTES` | `RYUUMONBUCHI_MAX_LOG_TAIL_BYTES` | `65536` | Worker log tail returned on failure |
-| `--classpath PATH` (repeatable) | `RYUUMONBUCHI_CLASSPATH` (path-sep) | &mdash; | Extra Java classpath entries |
-| `--class-file PATH` (repeatable) | `RYUUMONBUCHI_CLASS_FILES` (path-sep) | &mdash; | Extra Java class files to load |
-| `--vmarg ARG` (repeatable) | `RYUUMONBUCHI_VMARGS` (shlex) | &mdash; | Extra JVM arguments |
+| `--classpath PATH` (repeatable) | `RYUUMONBUCHI_CLASSPATH` (path-sep) | empty | Extra Java classpath entries |
+| `--class-file PATH` (repeatable) | `RYUUMONBUCHI_CLASS_FILES` (path-sep) | empty | Extra Java class files to load |
+| `--vmarg ARG` (repeatable) | `RYUUMONBUCHI_VMARGS` (shlex) | empty | Extra JVM arguments |
 
 > [!IMPORTANT]
 > Filesystem-writing tools (`program.export`, `program.export_packed`, `program.save_as`) are gated by `RYUUMONBUCHI_ALLOW_EXPORT`. Byte imports (`program.open_bytes`) are gated by `RYUUMONBUCHI_ALLOW_IMPORT_BYTES` and bounded by `RYUUMONBUCHI_MAX_IMPORT_BYTES`. Both default to disabled for safety.
@@ -143,64 +145,72 @@ All 216 tools use dotted names and accept a JSON object. Most backend tools take
 
 ## Usage
 
-### Typical agent flow
+Ryuumonbuchi runs as a stdio MCP server, so any MCP-compatible agent client can spawn it directly with `uvx` pointing at the Git repository. No global install or virtualenv setup is needed: `uvx` builds an isolated environment on first run and reuses it after.
 
-```python
-# 1. Open a binary -> get session_id
-session = mcp.call("program.open", {"path": "/bin/ls"})
+The examples below use `uvx git+https://github.com/elliottophellia/Ryuumonbuchi.git` as the command. Every flag from the [Configuration](#configuration) section can be appended after `--`, e.g. `-- --ghidra-install-dir /opt/ghidra --max-cpu 4`.
 
-# 2. Run auto-analysis
-mcp.call("analysis.update_and_wait", {"session_id": session["session_id"]})
+### Claude Code
 
-# 3. List functions, then decompile one
-funcs = mcp.call("function.list", {"session_id": session["session_id"], "limit": 20})
-decomp = mcp.call("decomp.function", {
-    "session_id": session["session_id"],
-    "function_start": funcs["functions"][0]["address"],
-})
+Add the server to your `.mcp.json` (project-scoped) or `~/.claude.json` (user-scoped) under `mcpServers`:
 
-# 4. Rename, retype, retag &mdash; batched in one transaction
-mcp.call("operation.batch", {
-    "session_id": session["session_id"],
-    "operations": [
-        {"tool": "function.rename", "arguments": {"session_id": sid, "function_start": addr, "name": "entry"}},
-        {"tool": "comment.set",      "arguments": {"session_id": sid, "address": addr, "comment": "main entry"}},
-    ],
-})
-
-# 5. Snapshot and close
-mcp.call("program.export_packed", {"session_id": sid, "destination_path": "/tmp/ls.gzf"})
-mcp.call("program.close", {"session_id": sid})
+```json
+{
+  "mcpServers": {
+    "ryuumonbuchi": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "git+https://github.com/elliottophellia/Ryuumonbuchi.git",
+        "--ghidra-install-dir",
+        "/usr/share/ghidra"
+      ],
+      "env": {
+        "RYUUMONBUCHI_MAX_CPU": "4",
+        "RYUUMONBUCHI_MAX_HEAP_MB": "2048"
+      }
+    }
+  }
+}
 ```
 
-### Open-world scripting
+Run `claude mcp list` to verify the server is picked up. Claude Code spawns the process on first tool call and keeps the persistent worker alive for the session.
 
-When the typed surface doesn't cover a need, drop into the live runtime:
+### Codex
 
-```python
-# Evaluate Python inside the live Ghidra JVM context (PyGhidra/Jep)
-mcp.call("ghidra.eval", {"code": "print(currentProgram.getName())", "write": False})
+Add the server to `~/.codex/config.toml`:
 
-# Run an arbitrary Ghidra script against the open session
-mcp.call("ghidra.script", {"path": "/scripts/MyScript.py", "session_id": sid, "write": True})
+```toml
+[mcp_servers.ryuumonbuchi]
+command = "uvx"
+args = ["git+https://github.com/elliottophellia/Ryuumonbuchi.git", "--ghidra-install-dir", "/usr/share/ghidra"]
+
+[mcp_servers.ryuumonbuchi.env]
+RYUUMONBUCHI_MAX_CPU = "4"
+RYUUMONBUCHI_MAX_HEAP_MB = "2048"
 ```
 
-### Headless batch jobs
+Run `codex mcp list` to confirm. Codex launches the server as a stdio child process on demand.
 
-For workflows that don't need a live session, `headless.run` invokes `analyzeHeadless` directly:
+### General agent usage
 
-```python
-mcp.call("headless.run", {
-    "arguments": [
-        "/tmp/project", "TempProj",
-        "-import", "/bin/ls",
-        "-postScript", "AnalyzeAll.java",
-        "-deleteProject",
-    ],
-    "timeout_seconds": 300,
-})
+Any MCP client that speaks stdio can drive Ryuumonbuchi. The common pattern:
+
+```jsonc
+// spawn: uvx git+https://github.com/elliottophellia/Ryuumonbuchi.git
+// then send MCP JSON-RPC over the child's stdin/stdout
 ```
+
+Once connected, the agent works through the tool surface in this order:
+
+1. `program.open` (or `program.open_bytes` for in-memory payloads) returns a `session_id`.
+2. `analysis.update_and_wait` runs auto-analysis on the open program.
+3. Read-only exploration: `function.list`, `decomp.function`, `memory.read`, `search.text`, `graph.call_paths`, and friends.
+4. Mutations: `function.rename`, `variable.retype`, `type.define_c`, `layout.struct.field.add`, `patch.assemble`, `comment.set`. Group several with `operation.batch` so they land in one undo transaction.
+5. `transaction.undo` / `redo` / `status` to walk back changes.
+6. `program.export_packed` to snapshot to a `.gzf` file (needs `RYUUMONBUCHI_ALLOW_EXPORT=1`), then `program.close`.
+
+For workflows that don't need a live session, `headless.run` invokes `analyzeHeadless` directly with exact argv, and `ghidra.eval` / `ghidra.script` / `ghidra.call` drop into the live PyGhidra runtime when the typed tools aren't enough.
 
 ## License
 
-GPL-2.0-only &mdash; see [LICENSE](LICENSE).
+GPL-2.0-only. See [LICENSE](LICENSE).
