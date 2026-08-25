@@ -546,9 +546,11 @@ wheels = [
 
 [[package]]
 name = "ryuumonbuchi"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
+    { name = "jsonschema" },
     { name = "mcp" },
     { name = "pyghidra" },
 ]
@@ -565,6 +567,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.9,<5" },
+    { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "pyghidra", specifier = ">=3.0.2,<4" },
 ]

@@ -1,39 +1,35 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
 
-"""One-shot Ghidra worker process lifecycle and response validation."""
+"""Persistent isolated backend child with socket-framed IPC."""
 
-from __future__ import annotations
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportPrivateUsage=false
 
 import asyncio
-import contextlib
 import json
 import os
-import shutil
 import signal
+import struct
 import subprocess
 import sys
-import time
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from .config import AppConfig, safe_descendant
-from .models import WorkerFailure, WorkerRequest, WorkerSuccess
-from .session import PROJECT_NAME, SessionWorkspace
+from .config import AppConfig
+from .models import (
+    SCHEMA_VERSION,
+    async_read_frame,
+    async_send_frame,
+    new_request_id,
+    parse_message,
+    read_exact,
+)
+from .session import RuntimeWorkspace
 
 
 class WorkerRunError(RuntimeError):
     """Base class for parent-side worker lifecycle failures."""
-
-    def __init__(
-        self, message: str, *, request_id: str, uncertain: bool, log_tail: bytes = b""
-    ) -> None:
-        super().__init__(message)
-        self.request_id = request_id
-        self.uncertain = uncertain
-        self.log_tail = log_tail
 
 
 class WorkerTimeoutError(WorkerRunError):
@@ -47,12 +43,16 @@ class WorkerCancelledError(WorkerRunError):
 class WorkerFailedError(WorkerRunError):
     """Raised when a worker exits or responds with an invalid envelope."""
 
+    def __init__(self, message: str, log_tail: str = "") -> None:
+        super().__init__(message)
+        self.log_tail = log_tail
+
 
 class WorkerOperationError(WorkerRunError):
     """Raised for a valid, known operation error from a clean worker."""
 
-    def __init__(self, code: str, message: str, *, request_id: str) -> None:
-        super().__init__(message, request_id=request_id, uncertain=False)
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
         self.code = code
 
 
@@ -64,242 +64,335 @@ class WorkerCall:
     result: Any
 
 
-class WorkerRunner:
-    """Launch exactly one isolated worker for each request."""
+_MAX_FRAME_BYTES = 512 * 1024 * 1024
 
-    def __init__(self, config: AppConfig, workspace: SessionWorkspace) -> None:
-        self.config = config
-        self.workspace = workspace
-        self._clock = time.monotonic
-        self.active_worker_pid: int | None = None
-        self.last_worker_pid: int | None = None
+_INHERITED_ENV_KEYS: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "JAVA_HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "PYTHONPATH",
+    "GHIDRA_INSTALL_DIR",
+)
+
+
+class PersistentWorker:
+    """Launch exactly one isolated worker for the MCP process lifetime."""
+
+    def __init__(self, config: AppConfig, workspace: RuntimeWorkspace) -> None:
+        self._config = config
+        self._workspace = workspace
+        self._lock = asyncio.Lock()
+        self._process: subprocess.Popen[bytes] | None = None
+        self._child_sock: Any = None
+        self._parent_sock: Any = None
+        self._generation: str = str(uuid.uuid4())
+        self._started = False
+        self._jvm_started = False
+        self._session_count = 0
+        self._task_count = 0
+        self._active_task_ids: list[str] = []
+        self._log_tail: str = ""
 
     @property
-    def worker_running(self) -> bool:
-        return self.active_worker_pid is not None
+    def generation(self) -> str:
+        return self._generation
 
-    async def run(
+    @property
+    def is_started(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    @property
+    def jvm_started(self) -> bool:
+        return self._jvm_started
+
+    @property
+    def log_tail(self) -> str:
+        return self._log_tail
+
+    def child_pid(self) -> int | None:
+        if self._process is not None and self._process.poll() is None:
+            return self._process.pid
+        return None
+
+    async def _ensure_started(self) -> None:
+        if self._process is not None and self._process.poll() is None:
+            return
+        await self._spawn()
+
+    async def _spawn(self) -> None:
+        import socket
+
+        parent_sock, child_sock = socket.socketpair()
+        parent_sock.setblocking(False)
+        child_sock.setblocking(True)
+
+        env: dict[str, str] = {}
+        for key in _INHERITED_ENV_KEYS:
+            val = os.environ.get(key)
+            if val is not None:
+                env[key] = val
+
+        child_fd = child_sock.fileno()
+        log_fd = os.open(str(self._workspace.worker_log), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+        self._process = subprocess.Popen(  # noqa: S603
+            [sys.executable, "-m", "ryuumonbuchi.worker"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=log_fd,
+            pass_fds=(child_fd,),
+            start_new_session=True,
+            close_fds=True,
+        )
+        os.close(log_fd)
+        child_sock.close()
+
+        self._parent_sock = parent_sock
+        loop = asyncio.get_event_loop()
+
+        # Send bootstrap
+        bootstrap = {
+            "schema": SCHEMA_VERSION,
+            "config": {
+                "install_dir": str(self._config.ghidra_install_dir),
+                "max_heap_mb": self._config.max_heap_mb,
+                "max_cpu": self._config.max_cpu,
+                "vm_args": list(self._config.vm_args),
+                "classpaths": list(self._config.classpaths),
+                "class_files": list(self._config.class_files),
+                "deterministic": True,
+                "workspace_root": str(self._workspace.root),
+            },
+        }
+        await async_send_frame(loop, self._parent_sock, bootstrap)
+        self._started = True
+        self._generation = str(uuid.uuid4())
+        self._jvm_started = False
+
+    async def call(
         self,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        timeout: int | None = None,
+    ) -> WorkerCall:
+        """Execute one tool through the persistent child."""
+        deadline = (
+            timeout if timeout is not None
+            else self._config.operation_timeout_seconds
+        )
+        request_id = new_request_id()
+        request = {
+            "schema": SCHEMA_VERSION,
+            "request_id": request_id,
+            "kind": "call",
+            "tool": tool,
+            "arguments": arguments,
+        }
+        return await self._request(request_id, request, deadline)
+
+    async def batch(
+        self,
+        session_id: str,
         operations: list[dict[str, Any]],
         *,
-        read_only: bool,
-        timeout_seconds: int | None = None,
-        program_name: str | None = None,
+        timeout: int | None = None,
     ) -> WorkerCall:
-        """Run a bounded operation envelope and return only structured Python data."""
-
-        if not operations or len(operations) > 32:
-            message = "worker operation count must be between 1 and 32"
-            raise ValueError(message)
-        request_id = str(uuid.uuid4())
-        run_dir = (self.workspace.runs_dir / request_id).resolve()
-        if not safe_descendant(run_dir, self.workspace.root):
-            message = "worker run path escaped the session workspace"
-            raise WorkerFailedError(
-                message,
-                request_id=request_id,
-                uncertain=not read_only,
-            )
-        run_dir.mkdir(mode=0o700)
-        process: subprocess.Popen[bytes] | None = None
-        try:
-            request_path = run_dir / "request.json"
-            response_path = run_dir / "response.json"
-            log_path = run_dir / "worker.log"
-            request = WorkerRequest(
-                request_id=request_id,
-                session_id=self.workspace.session_id,
-                project_dir=str(self.workspace.project_dir.resolve()),
-                project_name=PROJECT_NAME,
-                ghidra_install_dir=str(self.config.ghidra_install_dir),
-                max_heap_mb=self.config.max_heap_mb,
-                max_cpu=self.config.max_cpu,
-                max_response_bytes=self.config.max_response_bytes,
-                read_only=read_only,
-                program_name=program_name,
-                operations=operations,
-            )
-            self._write_json(request_path, request.model_dump(mode="json", by_alias=True))
-            process = self._spawn(request_path, response_path, log_path)
-            self.last_worker_pid = process.pid
-            self.active_worker_pid = process.pid
-            deadline = self._clock() + min(
-                self.config.operation_timeout_seconds,
-                timeout_seconds
-                if timeout_seconds is not None
-                else self.config.operation_timeout_seconds,
-            )
-            try:
-                await self._wait(process, deadline, request_id, not read_only, log_path)
-            except asyncio.CancelledError as exc:
-                await self._terminate(process)
-                message = f"worker request was cancelled: {request_id}"
-                raise WorkerCancelledError(
-                    message,
-                    request_id=request_id,
-                    uncertain=not read_only,
-                    log_tail=self._read_log_tail(log_path),
-                ) from exc
-            except WorkerTimeoutError:
-                await self._terminate(process)
-                raise
-            return self._read_response(response_path, request_id, read_only, log_path)
-        finally:
-            self.active_worker_pid = None
-            try:
-                if process is not None and process.poll() is None:
-                    await self._terminate(process)
-            finally:
-                with contextlib.suppress(OSError):
-                    shutil.rmtree(run_dir)
-
-    def _spawn(
-        self,
-        request_path: Path,
-        response_path: Path,
-        log_path: Path,
-    ) -> subprocess.Popen[bytes]:
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key in {"PATH", "HOME", "JAVA_HOME", "TMPDIR", "LANG", "LC_ALL", "PYTHONPATH"}
+        """Execute an atomic batch through the persistent child."""
+        deadline = (
+            timeout if timeout is not None
+            else self._config.operation_timeout_seconds
+        )
+        request_id = new_request_id()
+        request = {
+            "schema": SCHEMA_VERSION,
+            "request_id": request_id,
+            "kind": "batch",
+            "session_id": session_id,
+            "operations": operations,
         }
-        environment["GHIDRA_INSTALL_DIR"] = str(self.config.ghidra_install_dir)
-        log_handle = log_path.open("wb")
+        return await self._request(request_id, request, deadline)
+
+    async def status(self) -> dict[str, Any]:
+        """Query backend status without starting the JVM."""
+        if self._process is None or self._process.poll() is not None:
+            return {
+                "generation": self._generation,
+                "jvm_started": False,
+                "child_pid": None,
+                "session_count": self._session_count,
+                "task_count": self._task_count,
+                "active_task_ids": list(self._active_task_ids),
+            }
+        request_id = new_request_id()
+        request = {
+            "schema": SCHEMA_VERSION,
+            "request_id": request_id,
+            "kind": "status",
+        }
         try:
-            return subprocess.Popen(  # noqa: S603
-                [
-                    sys.executable,
-                    "-m",
-                    "ryuumonbuchi.worker",
-                    str(request_path),
-                    str(response_path),
-                ],
-                cwd=str(request_path.parent),
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=log_handle,
-                stderr=log_handle,
-                start_new_session=True,
-            )
-        finally:
-            log_handle.close()
+            call = await self._request(request_id, request, 10)
+            result = call.result
+            if isinstance(result, dict):
+                self._jvm_started = result.get("jvm_started", False)
+                self._session_count = result.get("session_count", 0)
+                self._task_count = result.get("task_count", 0)
+                self._active_task_ids = result.get("active_task_ids", [])
+            return result if isinstance(result, dict) else {}
+        except WorkerRunError:
+            return {
+                "generation": self._generation,
+                "jvm_started": False,
+                "child_pid": None,
+                "session_count": self._session_count,
+                "task_count": self._task_count,
+                "active_task_ids": list(self._active_task_ids),
+            }
 
-    async def _wait(
-        self,
-        process: subprocess.Popen[bytes],
-        deadline: float,
-        request_id: str,
-        uncertain: bool,
-        log_path: Path,
-    ) -> None:
-        while process.poll() is None:
-            if self._clock() >= deadline:
-                message = f"worker request timed out: {request_id}"
-                raise WorkerTimeoutError(
-                    message,
-                    request_id=request_id,
-                    uncertain=uncertain,
-                    log_tail=self._read_log_tail(log_path),
-                )
-            await asyncio.sleep(0.05)
-        if process.returncode != 0:
-            message = f"worker exited with status {process.returncode}: {request_id}"
-            raise WorkerFailedError(
-                message,
-                request_id=request_id,
-                uncertain=uncertain,
-                log_tail=self._read_log_tail(log_path),
-            )
+    async def shutdown(self) -> None:
+        """Gracefully shut down the persistent child."""
+        if self._process is None:
+            return
+        proc = self._process
+        if proc.poll() is None:
+            try:
+                request_id = new_request_id()
+                request = {
+                    "schema": SCHEMA_VERSION,
+                    "request_id": request_id,
+                    "kind": "shutdown",
+                }
+                loop = asyncio.get_event_loop()
+                if self._parent_sock is not None:
+                    await async_send_frame(loop, self._parent_sock, request)
+                    try:
+                        await asyncio.wait_for(
+                            loop.sock_recv(self._parent_sock, 8), timeout=5
+                        )
+                    except (OSError, asyncio.TimeoutError):
+                        pass
+            except (OSError, WorkerRunError):
+                pass
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with __import__("contextlib").suppress(ProcessLookupError):
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                proc.wait(timeout=5)
+        self._parent_sock = None
+        self._process = None
+        self._started = False
+        self._jvm_started = False
 
-    def _read_response(
-        self,
-        response_path: Path,
-        request_id: str,
-        read_only: bool,
-        log_path: Path,
+    async def _request(
+        self, request_id: str, request: dict[str, Any], deadline: int
     ) -> WorkerCall:
-        try:
-            if not response_path.is_file():
-                raise FileNotFoundError(response_path)
-            if response_path.stat().st_size > self.config.max_response_bytes:
-                message = "response exceeds configured size"
-                raise ValueError(message)
-            payload = json.loads(response_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            message = f"worker response is missing or malformed: {request_id}"
-            raise WorkerFailedError(
-                message,
-                request_id=request_id,
-                uncertain=not read_only,
-                log_tail=self._read_log_tail(log_path),
-            ) from exc
-        try:
-            if not isinstance(payload, dict):
-                message = "response envelope is not an object"
-                raise ValueError(message)
-            payload_dict = cast(dict[str, Any], payload)
-            if payload_dict.get("ok") is True:
-                response = WorkerSuccess.model_validate(payload_dict)
-                if response.request_id != request_id:
-                    message = "response request ID mismatch"
-                    raise ValueError(message)
-                return WorkerCall(request_id, response.result)
-            if payload_dict.get("ok") is False:
-                response = WorkerFailure.model_validate(payload_dict)
-                if response.request_id != request_id:
-                    message = "response request ID mismatch"
-                    raise ValueError(message)
-                raise WorkerOperationError(
-                    response.error.code,
-                    response.error.message,
-                    request_id=request_id,
+        async with self._lock:
+            await self._ensure_started()
+            loop = asyncio.get_event_loop()
+            assert self._parent_sock is not None
+
+            try:
+                await async_send_frame(loop, self._parent_sock, request)
+                response = await asyncio.wait_for(
+                    async_read_frame(loop, self._parent_sock), timeout=deadline
                 )
-            message = "response envelope is not a success or failure"
-            raise ValueError(message)
-        except WorkerOperationError:
-            raise
-        except Exception as exc:
-            message = f"worker response schema mismatch: {request_id}"
-            raise WorkerFailedError(
-                message,
-                request_id=request_id,
-                uncertain=not read_only,
-                log_tail=self._read_log_tail(log_path),
-            ) from exc
+            except asyncio.TimeoutError as exc:
+                await self._handle_failure("worker_timeout")
+                msg = f"worker timed out after {deadline}s"
+                raise WorkerTimeoutError(msg) from exc
+            except (ConnectionError, OSError) as exc:
+                await self._handle_failure("worker_failed")
+                msg = f"worker connection error: {exc}"
+                raise WorkerFailedError(msg, self._log_tail) from exc
+            except asyncio.CancelledError:
+                await self._handle_failure("worker_cancelled")
+                raise
 
-    @staticmethod
-    def _write_json(path: Path, payload: dict[str, Any]) -> None:
-        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+            if response is None:
+                await self._handle_failure("worker_failed")
+                msg = "worker closed connection"
+                raise WorkerFailedError(msg, self._log_tail)
 
-    def _read_log_tail(self, path: Path) -> bytes:
+            if response.get("request_id") != request_id:
+                await self._handle_failure("worker_failed")
+                msg = f"request ID mismatch: expected {request_id}, got {response.get('request_id')}"
+                raise WorkerFailedError(msg, self._log_tail)
+
+            if not response.get("ok", False):
+                error = response.get("error", {})
+                code = error.get("code", "ghidra_error")
+                message = error.get("message", "unknown error")
+                if code in ("worker_timeout", "worker_cancelled", "worker_failed"):
+                    await self._handle_failure(code)
+                    if code == "worker_timeout":
+                        raise WorkerTimeoutError(message) from None
+                    if code == "worker_cancelled":
+                        raise WorkerCancelledError(message) from None
+                    raise WorkerFailedError(message, self._log_tail) from None
+                raise WorkerOperationError(code, message) from None
+
+            result = response.get("result")
+            if response.get("spilled"):
+                result_path = response.get("result_path")
+                if result_path:
+                    try:
+                        with open(result_path) as f:
+                            result = json.load(f)
+                    except (OSError, json.JSONDecodeError) as exc:
+                        msg = f"failed to read spilled result: {exc}"
+                        raise WorkerFailedError(msg, self._log_tail) from exc
+
+            return WorkerCall(request_id=request_id, result=result)
+
+    async def _handle_failure(self, code: str) -> None:
+        """Terminate the process group and reset generation."""
+        proc = self._process
+        self._parent_sock = None
+        self._process = None
+        self._started = False
+        self._jvm_started = False
+        self._session_count = 0
+        self._task_count = 0
+        self._active_task_ids = []
+        self._generation = str(uuid.uuid4())
+
+        if proc is not None and proc.poll() is None:
+            with __import__("contextlib").suppress(ProcessLookupError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with __import__("contextlib").suppress(ProcessLookupError):
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                proc.wait(timeout=5)
+
+        # Read log tail
         try:
-            with path.open("rb") as handle:
-                handle.seek(0, os.SEEK_END)
-                size = handle.tell()
-                handle.seek(max(0, size - self.config.max_log_tail_bytes))
-                return handle.read(self.config.max_log_tail_bytes)
+            log_data = self._workspace.worker_log.read_bytes()
+            self._log_tail = log_data[-8192:].decode("utf-8", errors="replace")
         except OSError:
-            return b""
+            pass
 
-    async def _terminate(self, process: subprocess.Popen[bytes]) -> None:
-        pid = process.pid
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(pid, signal.SIGTERM)
-        deadline = self._clock() + 5.0
-        while process.poll() is None and self._clock() < deadline:
-            await asyncio.sleep(0.05)
-        if process.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(pid, signal.SIGKILL)
-        with contextlib.suppress(subprocess.TimeoutExpired, ChildProcessError):
-            process.wait(timeout=1)
+    def _read_exact_sync(self, sock: Any, n: int) -> bytes | None:
+        return read_exact(sock, n)
+
+    def _read_frame_sync(self, sock: Any) -> dict[str, Any] | None:
+        header = read_exact(sock, 8)
+        if header is None or len(header) < 8:
+            return None
+        (length,) = struct.unpack(">Q", header)
+        if length > _MAX_FRAME_BYTES:
+            raise ValueError("frame too large")
+        if length == 0:
+            return {}
+        body = read_exact(sock, length)
+        if body is None or len(body) < length:
+            return None
+        return parse_message(body)

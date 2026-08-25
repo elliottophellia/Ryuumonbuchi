@@ -1,305 +1,314 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
 
-"""One-shot worker command-line entrypoint and response serialization."""
+"""Persistent worker child: frame loop, backend dispatch, IPC."""
 
-# pyright: reportMissingImports=false, reportMissingModuleSource=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingTypeStubs=false
+# pyright: reportMissingImports=false, reportMissingModuleSource=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingTypeStubs=false, reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 import traceback
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+from uuid import uuid4
 
-import pyghidra
-from pydantic import ValidationError
+from ..backend import BackendConfig, GhidraBackend, GhidraBackendError
+from ..catalog import TOOL_BY_NAME
+from ..models import SCHEMA_VERSION, frame_message, parse_message, read_exact
 
-from ..models import (
-    READ_ACTIONS,
-    BatchOperation,
-    ProgramDeleteOperation,
-    ProgramImportBytesOperation,
-    ProgramImportOperation,
-    ProgramSaveOperation,
-    WorkerError,
-    WorkerFailure,
-    WorkerOperation,
-    WorkerRequest,
-    WorkerSuccess,
-)
-from .context import WorkerContext, WorkerGhidraError
-from .dispatch import execute_operation, parse_operation
-from .operations import OperationError
+_MAX_RESPONSE_BYTES = 4 * 1024 * 1024  # 4 MiB
+_SPILL_PREFIX_BYTES = 256 * 1024  # 256 KiB preview
 
 
-def _write_response(
-    path: Path,
-    request_id: str,
-    *,
-    max_response_bytes: int,
-    result: object = None,
-    error: tuple[str, str] | None = None,
-) -> None:
-    if error is None:
-        payload = WorkerSuccess(request_id=request_id, result=result).model_dump(
-            mode="json", by_alias=True
-        )
-    else:
-        payload = WorkerFailure(
-            request_id=request_id,
-            error=WorkerError(code=error[0], message=error[1]),
-        ).model_dump(mode="json", by_alias=True)
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(encoded) > max_response_bytes and error is None:
-        payload = WorkerFailure(
-            request_id=request_id,
-            error=WorkerError(
-                code="response_too_large",
-                message="worker response exceeds the configured byte limit",
-            ),
-        ).model_dump(mode="json", by_alias=True)
-        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(encoded) > max_response_bytes:
-        raise WorkerGhidraError("response_too_large: error response exceeds configured byte limit")
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        with temporary.open("wb") as handle:
-            handle.write(encoded)
-            handle.write(b"\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary.replace(path)
-    finally:
-        with suppress(OSError):
-            temporary.unlink()
-
-
-def _import_program(context: WorkerContext, operation: ProgramImportOperation) -> dict[str, Any]:
-    monitor = pyghidra.task_monitor()
-    loader = (
-        pyghidra.program_loader()
-        .source(operation.source_path)
-        .project(context.project)
-        .projectFolderPath("/")
-        .name(operation.program_name)
-        .monitor(monitor)
+def _build_config(raw: dict[str, Any]) -> BackendConfig:
+    return BackendConfig(
+        install_dir=raw.get("install_dir"),
+        max_heap_mb=raw.get("max_heap_mb", 1024),
+        max_cpu=raw.get("max_cpu", 2),
+        vm_args=tuple(raw.get("vm_args", [])),
+        classpaths=tuple(raw.get("classpaths", [])),
+        class_files=tuple(raw.get("class_files", [])),
+        deterministic=raw.get("deterministic", True),
     )
-    results = loader.load()
-    saved_domain_file: Any = None
+
+
+def _apply_cpu_affinity(max_cpu: int) -> int:
+    allowed = list(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+    if not allowed:
+        raise RuntimeError("empty CPU affinity set")
+    selected = sorted(allowed)[: max(1, min(max_cpu, len(allowed)))]
+    os.sched_setaffinity(0, set(selected))  # type: ignore[attr-defined]
+    return len(selected)
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """Convert Java/Python objects to JSON-serializable forms."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(item) for item in obj]
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    # Java objects via Jep — try common conversion
+    with suppress(Exception):
+        return str(obj)
+    return str(obj)
+
+
+def _should_spill(result: Any) -> bool:
     try:
-        results.save(monitor)
-        saved_domain_file = results.getPrimary().getSavedDomainFile()
-    finally:
-        results.close()
+        data = json.dumps(result, ensure_ascii=False, default=str)
+        return len(data.encode("utf-8")) > _MAX_RESPONSE_BYTES
+    except (TypeError, ValueError):
+        return False
+
+
+def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
     try:
-        with context.writable_program(operation.program_name) as program:
-            analyzed = False
-            if operation.analyze:
-                pyghidra.analyze(program, pyghidra.task_monitor())
-                analyzed = True
-            language = program.getLanguage()
-            language_id = str(language.getLanguageID())
-            processor = str(language.getProcessor())
-            program.save("Imported by Ryuumonbuchi", pyghidra.task_monitor())
-    except BaseException:
-        if saved_domain_file is not None:
-            with suppress(Exception):
-                saved_domain_file.delete()
-        raise
+        data = json.dumps(result, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        data = json.dumps({"error": "result not serializable"})
+    raw = data.encode("utf-8")
+    run_dir = Path(workspace_root) / "runs"
+    run_dir.mkdir(mode=0o700, exist_ok=True)
+    spill_path = run_dir / f"result-{uuid4().hex}.json"
+    fd = os.open(str(spill_path), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+    os.write(fd, raw)
+    os.close(fd)
+    preview = data[:_SPILL_PREFIX_BYTES]
+    if len(data) > _SPILL_PREFIX_BYTES:
+        preview += "...[truncated]"
     return {
-        "program_name": operation.program_name,
-        "analyzed": analyzed,
-        "language_id": language_id,
-        "processor": processor,
+        "spilled": True,
+        "result_path": str(spill_path),
+        "preview": preview,
+        "total_bytes": len(raw),
     }
 
 
-def _import_program_bytes(
-    context: WorkerContext, operation: ProgramImportBytesOperation
-) -> dict[str, Any]:
-    import base64
-    import tempfile
-
-    payload = base64.b64decode(operation.data, validate=True)
-    with tempfile.TemporaryDirectory(prefix="ryuumonbuchi-import-") as directory:
-        source = Path(directory) / operation.program_name
-        source.write_bytes(payload)
-        wrapped = ProgramImportOperation(
-            source_path=str(source),
-            program_name=operation.program_name,
-            analyze=operation.analyze,
-        )
-        return _import_program(context, wrapped)
+def _send_response(payload: dict[str, Any]) -> None:
+    data = frame_message(payload)
+    os.write(3, data)
 
 
-def _save_program(
-    context: WorkerContext, request: WorkerRequest, operation: ProgramSaveOperation
-) -> dict[str, Any]:
-    """Write a lossless GZF snapshot of the program to a destination file."""
-    from java.io import File  # type: ignore[import-not-found]
-
-    name = request.program_name
-    if not name:
-        raise OperationError("program_name is required in worker request envelope")
-    destination = Path(operation.destination_path).expanduser().resolve()
-    if destination.exists() and not operation.overwrite:
-        raise OperationError(f"destination already exists: {destination}")
-    overwritten = destination.exists()
-    temporary = destination.with_name(f"{destination.name}.tmp{os.getpid()}")
-    try:
-        with context.writable_program(name) as program:
-            program.saveToPackedFile(File(str(temporary)), pyghidra.task_monitor())
-        temporary.chmod(0o600)
-        temporary.replace(destination)
-        return {
-            "program_name": name,
-            "destination_path": str(destination),
-            "bytes_written": destination.stat().st_size,
-            "overwritten": overwritten,
+def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> None:
+    if workspace_root and _should_spill(result):
+        spill = _spill_result(result, workspace_root)
+        response = {
+            "schema": SCHEMA_VERSION,
+            "request_id": request_id,
+            "ok": True,
+            "result": spill,
         }
-    except OSError as exc:
-        raise WorkerGhidraError(f"cannot write destination: {destination}: {exc}") from exc
-    finally:
-        with suppress(OSError):
-            temporary.unlink()
+    else:
+        response = {
+            "schema": SCHEMA_VERSION,
+            "request_id": request_id,
+            "ok": True,
+            "result": _to_jsonable(result),
+        }
+    _send_response(response)
 
 
-def _delete_program(context: WorkerContext, operation: ProgramDeleteOperation) -> dict[str, Any]:
-    if context.project is None:
-        raise WorkerGhidraError("Ghidra project is not open")
-    domain_file = context.project.getProjectData().getFile(f"/{operation.program_name}")
-    if domain_file is None:
-        raise WorkerGhidraError(f"Program is not found: {operation.program_name}")
-    domain_file.delete()
-    return {"program_name": operation.program_name, "deleted": True}
+def _send_error(request_id: str, code: str, message: str, **extra: Any) -> None:
+    error: dict[str, Any] = {"code": code, "message": message}
+    error.update(extra)
+    response = {
+        "schema": SCHEMA_VERSION,
+        "request_id": request_id,
+        "ok": False,
+        "error": error,
+    }
+    _send_response(response)
 
 
-def _execute_batch(
-    context: WorkerContext, request: WorkerRequest, parsed: list[WorkerOperation]
-) -> object:
-    program_name = request.program_name
-    if not program_name:
-        raise OperationError("program_name is required in worker request envelope")
-    operations = [cast(BatchOperation, operation) for operation in parsed]
-    with context.program(program_name, read_only=request.read_only) as program:
-        monitor = pyghidra.task_monitor()
-        transaction_id: int | None = None
-        try:
-            if not request.read_only:
-                transaction_id = program.startTransaction("Ryuumonbuchi batch")
-            results: list[dict[str, Any]] = []
-            for operation in operations:
-                value = execute_operation(context, program, operation, monitor)
-                results.append({"action": operation.action, "result": value})
-            if transaction_id is not None:
-                program.endTransaction(transaction_id, True)
-                transaction_id = None
-            if not request.read_only:
-                program.save("Ryuumonbuchi operation", pyghidra.task_monitor())
-        except BaseException:
-            if transaction_id is not None:
-                with suppress(Exception):
-                    program.endTransaction(transaction_id, False)
-            raise
-    return results[0]["result"] if len(results) == 1 else {"results": results}
+def _dispatch_call(backend: GhidraBackend, tool: str, arguments: dict[str, Any]) -> Any:
+    spec = TOOL_BY_NAME.get(tool)
+    if spec is None:
+        raise GhidraBackendError(f"unknown tool: {tool}")
+    if spec.backend_method is None:
+        raise GhidraBackendError(f"tool {tool} has no backend method")
+    method = getattr(backend, spec.backend_method)
+    return method(**arguments)
 
 
-def worker_main(request_path: Path, response_path: Path) -> int:
-    request_id = "unknown"
-    max_response_bytes = 4_194_304
-    context: WorkerContext | None = None
-    result: object = None
-    error: tuple[str, str] | None = None
-    exit_code = 0
+def _dispatch_batch(
+    backend: GhidraBackend,
+    session_id: str,
+    operations: list[dict[str, Any]],
+) -> Any:
+    results: list[dict[str, Any]] = []
+    record = backend._get_record(session_id)  # noqa: SLF001
+    any_mutates = False
+
+    # Validate and classify
+    validated: list[tuple[str, dict[str, Any], bool]] = []
+    for op in operations:
+        tool = op.get("tool")
+        args = dict(op.get("arguments", {}))
+        if "session_id" not in args:
+            args["session_id"] = session_id
+        elif args["session_id"] != session_id:
+            raise GhidraBackendError(
+                f"operation session_id mismatch: {args['session_id']} != {session_id}"
+            )
+        spec = TOOL_BY_NAME.get(tool)
+        if spec is None:
+            raise GhidraBackendError(f"unknown tool in batch: {tool}")
+        if not spec.batch_allowed:
+            raise GhidraBackendError(f"tool {tool} is not batchable")
+        mutates = not spec.read_only
+        any_mutates = any_mutates or mutates
+        validated.append((tool, args, spec.read_only))
+
+    if any_mutates and record.read_only:
+        raise GhidraBackendError("batch requires a writable session")
+
+    tx_id: int | None = None
     try:
-        request = WorkerRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
-        request_id = request.request_id
-        max_response_bytes = request.max_response_bytes
-        context = WorkerContext(request)
-        context.start()
-        if len(request.operations) > 32:
-            raise OperationError("worker batch exceeds 32 operations")
-        parsed = [parse_operation(raw) for raw in request.operations]
-        lifecycle = [
-            operation
-            for operation in parsed
-            if isinstance(
-                operation,
-                (
-                    ProgramImportOperation,
-                    ProgramImportBytesOperation,
-                    ProgramSaveOperation,
-                    ProgramDeleteOperation,
-                ),
+        if any_mutates:
+            tx_id = int(
+                backend._get_program(session_id).startTransaction(  # noqa: SLF001
+                    "Ryuumonbuchi operation.batch"
+                )
             )
-        ]
-        if lifecycle and len(parsed) != 1:
-            raise OperationError("program import/delete cannot be batched")
-        expected_read_only = not lifecycle and all(
-            operation.action in READ_ACTIONS for operation in parsed
-        )
-        if request.read_only != expected_read_only:
-            raise OperationError("worker read_only flag does not match operation set")
-        if lifecycle:
-            operation = lifecycle[0]
-            if isinstance(operation, ProgramImportOperation):
-                if request.program_name != operation.program_name:
-                    raise OperationError("worker program_name does not match lifecycle operation")
-                result = _import_program(context, operation)
-            elif isinstance(operation, ProgramImportBytesOperation):
-                if request.program_name != operation.program_name:
-                    raise OperationError("worker program_name does not match lifecycle operation")
-                result = _import_program_bytes(context, operation)
-            elif isinstance(operation, ProgramSaveOperation):
-                if not request.program_name:
-                    raise OperationError("worker program_name does not match lifecycle operation")
-                result = _save_program(context, request, operation)
-            else:
-                if request.program_name != operation.program_name:
-                    raise OperationError("worker program_name does not match lifecycle operation")
-                result = _delete_program(context, operation)
-        else:
-            result = _execute_batch(context, request, parsed)
-    except ValidationError as exc:
-        error = ("invalid_params", str(exc))
-    except (OperationError, WorkerGhidraError, FileNotFoundError) as exc:
-        error = ("ghidra_error", str(exc))
-    except BaseException as exc:
-        traceback.print_exc(file=sys.stderr)
-        error = ("worker_failed", str(exc))
-        exit_code = 1
-    finally:
-        if context is not None:
+
+        for tool, args, _read_only in validated:
             try:
-                context.close()
-            except BaseException as exc:
-                traceback.print_exc(file=sys.stderr)
-                exit_code = 1
-                if error is None:
-                    error = ("worker_cleanup_failed", str(exc))
-        try:
-            _write_response(
-                response_path,
-                request_id,
-                max_response_bytes=max_response_bytes,
-                result=result,
-                error=error,
-            )
-        except BaseException:
-            traceback.print_exc(file=sys.stderr)
-            exit_code = 1
-    return exit_code
+                result = _dispatch_call(backend, tool, args)
+                results.append({"tool": tool, "result": result})
+            except Exception:
+                if tx_id is not None:
+                    backend._get_program(session_id).endTransaction(tx_id, False)  # noqa: SLF001
+                    tx_id = None
+                raise
+
+        if tx_id is not None:
+            backend._get_program(session_id).endTransaction(tx_id, True)  # noqa: SLF001
+            tx_id = None
+            with suppress(Exception):
+                record.project.save(record.program)
+
+    except Exception:
+        if tx_id is not None:
+            with suppress(Exception):
+                backend._get_program(session_id).endTransaction(tx_id, False)  # noqa: SLF001
+        raise
+
+    return {"results": results}
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: python -m ryuumonbuchi.worker REQUEST_JSON RESPONSE_JSON", file=sys.stderr)
-        return 2
-    return worker_main(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
+    # Read bootstrap from fd 3
+    sock_fd = 3
+    os.set_blocking(sock_fd, True)
+
+    # Read bootstrap frame
+    header = read_exact(sock_fd, 8)
+    if header is None or len(header) < 8:
+        return 1
+    import struct
+
+    (length,) = struct.unpack(">Q", header)
+    body = read_exact(sock_fd, length)
+    if body is None or len(body) < length:
+        return 1
+    bootstrap = parse_message(body)
+    raw_config = bootstrap.get("config", {})
+    config = _build_config(raw_config)
+
+    # Apply CPU affinity before importing PyGhidra
+    effective_cpus = _apply_cpu_affinity(config.max_cpu)
+
+    # Import PyGhidra and construct backend
+    import pyghidra
+
+    backend = GhidraBackend(pyghidra, config)
+    workspace_root = raw_config.get("workspace_root", "")
+
+    # Frame loop
+    while True:
+        try:
+            header = read_exact(sock_fd, 8)
+        except OSError:
+            break
+        if header is None or len(header) < 8:
+            break
+
+        (length,) = struct.unpack(">Q", header)
+        if length == 0:
+            continue
+        body = read_exact(sock_fd, length)
+        if body is None or len(body) < length:
+            break
+
+        try:
+            request = parse_message(body)
+        except ValueError as exc:
+            # Can't respond without a request_id
+            continue
+
+        request_id = request.get("request_id", "")
+        kind = request.get("kind", "")
+
+        if kind == "shutdown":
+            _send_success(request_id, {"shutdown": True})
+            break
+
+        if kind == "status":
+            status = {
+                "generation": backend._generation,  # noqa: SLF001
+                "jvm_started": backend._started,  # noqa: SLF001
+                "child_pid": os.getpid(),
+                "effective_cpus": effective_cpus,
+                "session_count": len(backend._sessions),  # noqa: SLF001
+                "task_count": len(backend._tasks),  # noqa: SLF001
+                "active_task_ids": list(backend._tasks),  # noqa: SLF001
+            }
+            _send_success(request_id, status)
+            continue
+
+        if kind == "call":
+            try:
+                tool = request.get("tool", "")
+                arguments = request.get("arguments", {})
+                result = _dispatch_call(backend, tool, arguments)
+                _send_success(request_id, result, workspace_root=workspace_root)
+            except GhidraBackendError as exc:
+                _send_error(request_id, "ghidra_error", str(exc))
+            except Exception as exc:
+                tb = traceback.format_exc()
+                if isinstance(exc, SystemExit):
+                    _send_error(request_id, "worker_failed", f"worker exited: {exc}")
+                    break
+                _send_error(request_id, "ghidra_error", f"{exc}\n{tb}")
+            continue
+
+        if kind == "batch":
+            try:
+                session_id = request.get("session_id", "")
+                operations = request.get("operations", [])
+                result = _dispatch_batch(backend, session_id, operations)
+                _send_success(request_id, result, workspace_root=workspace_root)
+            except GhidraBackendError as exc:
+                _send_error(request_id, "ghidra_error", str(exc))
+            except Exception as exc:
+                tb = traceback.format_exc()
+                _send_error(request_id, "ghidra_error", f"{exc}\n{tb}")
+            continue
+
+        _send_error(request_id, "invalid_params", f"unknown request kind: {kind}")
+
+    # Cleanup
+    with suppress(Exception):
+        backend.shutdown()
+
+    return 0
 
 
 if __name__ == "__main__":

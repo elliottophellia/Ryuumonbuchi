@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import shutil
@@ -15,12 +14,12 @@ from typing import Any, cast
 import pytest
 
 from ryuumonbuchi.config import AppConfig, ConfigError, validate_ghidra_installation
-from ryuumonbuchi.session import SessionWorkspace
+from ryuumonbuchi.session import RuntimeWorkspace
 
 
 def _java_major(java_path: str) -> int | None:
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603
             [java_path, "-version"], capture_output=True, text=True, check=False
         )
     except OSError:
@@ -58,6 +57,25 @@ def live_ghidra(request: pytest.FixtureRequest) -> Path | None:
     return installation.path
 
 
+@pytest.fixture(autouse=True)
+def live_server(request: pytest.FixtureRequest) -> Path | None:
+    node: Any = cast(Any, request).node
+    marker = getattr(node, "get_closest_marker", None)
+    if marker is None or marker("live_server") is None:
+        return None
+    url = os.environ.get("RYUUMONBUCHI_TEST_GHIDRA_URL")
+    if not url:
+        _require_live("live_server tests require RYUUMONBUCHI_TEST_GHIDRA_URL")
+        return None
+    ghidra_path = os.environ.get("GHIDRA_INSTALL_DIR", "/usr/share/ghidra")
+    try:
+        installation = validate_ghidra_installation(ghidra_path)
+    except (ConfigError, FileNotFoundError) as exc:
+        _require_live(f"live_server tests require a valid Ghidra installation: {exc}")
+        return None
+    return installation.path
+
+
 @pytest.fixture
 def c_compiler() -> str:
     compiler = shutil.which("cc")
@@ -84,13 +102,18 @@ def fake_ghidra(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def app_config(fake_ghidra: Path) -> AppConfig:
-    return AppConfig(fake_ghidra, max_heap_mb=256, max_cpu=1, operation_timeout_seconds=30)
+    return AppConfig(
+        ghidra_install_dir=fake_ghidra,
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
+    )
 
 
 @pytest.fixture
-def workspace(tmp_path: Path) -> Iterator[SessionWorkspace]:
-    value = SessionWorkspace.create("12.0.4", temp_dir=tmp_path)
+def workspace(tmp_path: Path) -> Iterator[RuntimeWorkspace]:
+    value = RuntimeWorkspace.create(base=tmp_path)
     try:
         yield value
     finally:
-        asyncio.run(value.close())
+        value.close()
