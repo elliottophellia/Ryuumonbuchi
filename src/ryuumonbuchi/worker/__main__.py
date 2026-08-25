@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import traceback
 from contextlib import suppress
 from pathlib import Path
@@ -21,6 +22,10 @@ from ..models import SCHEMA_VERSION, frame_message, parse_message, read_exact
 
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024  # 4 MiB
 _SPILL_PREFIX_BYTES = 256 * 1024  # 256 KiB preview
+
+# Inherited IPC socket, wrapped from the fd passed by the parent via
+# RYUUMONBUCHI_WORKER_FD. Set once in main(); none before initialization.
+_SOCK: socket.socket | None = None
 
 
 def _build_config(raw: dict[str, Any]) -> BackendConfig:
@@ -92,8 +97,9 @@ def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
 
 
 def _send_response(payload: dict[str, Any]) -> None:
+    assert _SOCK is not None, "worker socket not initialized"
     data = frame_message(payload)
-    os.write(3, data)
+    _SOCK.sendall(data)
 
 
 def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> None:
@@ -204,18 +210,25 @@ def _dispatch_batch(
 
 
 def main() -> int:
-    # Read bootstrap from fd 3
-    sock_fd = 3
+    # The parent passes our IPC socket fd via the environment. pass_fds
+    # preserves the parent's fd number verbatim (no remap), so it is not
+    # necessarily 3; read it dynamically and wrap it into a socket object.
+    sock_fd_raw = os.environ.get("RYUUMONBUCHI_WORKER_FD")
+    if sock_fd_raw is None:
+        return 1
+    sock_fd = int(sock_fd_raw)
     os.set_blocking(sock_fd, True)
+    global _SOCK
+    _SOCK = socket.socket(fileno=sock_fd)
 
     # Read bootstrap frame
-    header = read_exact(sock_fd, 8)
+    header = read_exact(_SOCK, 8)
     if header is None or len(header) < 8:
         return 1
     import struct
 
     (length,) = struct.unpack(">Q", header)
-    body = read_exact(sock_fd, length)
+    body = read_exact(_SOCK, length)
     if body is None or len(body) < length:
         return 1
     bootstrap = parse_message(body)
@@ -234,7 +247,7 @@ def main() -> int:
     # Frame loop
     while True:
         try:
-            header = read_exact(sock_fd, 8)
+            header = read_exact(_SOCK, 8)
         except OSError:
             break
         if header is None or len(header) < 8:
@@ -243,7 +256,7 @@ def main() -> int:
         (length,) = struct.unpack(">Q", header)
         if length == 0:
             continue
-        body = read_exact(sock_fd, length)
+        body = read_exact(_SOCK, length)
         if body is None or len(body) < length:
             break
 

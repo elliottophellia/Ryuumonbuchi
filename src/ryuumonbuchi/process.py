@@ -140,13 +140,18 @@ class PersistentWorker:
 
         self._process = subprocess.Popen(  # noqa: S603
             [sys.executable, "-m", "ryuumonbuchi.worker"],
-            env=env,
+            env={
+                **env,
+                # Tell the worker which inherited fd carries its IPC socket;
+                # pass_fds preserves the parent fd number verbatim (no remap),
+                # so the worker must read it dynamically rather than hardcode fd 3.
+                "RYUUMONBUCHI_WORKER_FD": str(child_fd),
+            },
             stdin=subprocess.DEVNULL,
             stdout=log_fd,
             stderr=log_fd,
             pass_fds=(child_fd,),
             start_new_session=True,
-            close_fds=True,
         )
         os.close(log_fd)
         child_sock.close()
