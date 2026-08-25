@@ -5,6 +5,7 @@
 ### Added
 
 - `AGENTS.md` contributor instructions and `skills/SKILL.md` agent operating guide.
+- Consolidated the `ryuumonbuchi-sleep-bypass` and `ryuumonbuchi-operational-gotchas` managed skills into `skills/SKILL.md`: added a Development section (server restart and parent/worker reload discipline), an expanded address-mangling note, the manual NOP fallback, and a worked sleep/timing-gate bypass recipe. Fixed the skill frontmatter `name` from `skills` to `ryuumonbuchi`.
 
 ### Changed
 
