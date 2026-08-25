@@ -145,7 +145,7 @@ All 216 tools use dotted names and accept a JSON object. Most backend tools take
 
 ## Usage
 
-Ryuumonbuchi runs as a stdio MCP server, so any MCP-compatible agent client can spawn it directly with `uvx` pointing at the Git repository. No global install or virtualenv setup is needed: `uvx` builds an isolated environment on first run and reuses it after.
+Ryuumonbuchi runs as a stdio MCP server, so any MCP-compatible agent can spawn it directly with `uvx` pointing at the Git repository. No global install or virtualenv setup is needed: `uvx` builds an isolated environment on first run and reuses it after.
 
 The examples below use `uvx git+https://github.com/elliottophellia/Ryuumonbuchi.git` as the command. Every flag from the [Configuration](#configuration) section can be appended after `--`, e.g. `-- --ghidra-install-dir /opt/ghidra --max-cpu 4`.
 
@@ -193,7 +193,7 @@ Run `codex mcp list` to confirm. Codex launches the server as a stdio child proc
 
 ### General agent usage
 
-Any MCP client that speaks stdio can drive Ryuumonbuchi. The common pattern:
+Any agent that speaks stdio can drive Ryuumonbuchi. The common pattern:
 
 ```jsonc
 // spawn: uvx git+https://github.com/elliottophellia/Ryuumonbuchi.git
