@@ -327,7 +327,9 @@ def test_roots_are_objects_with_additional_properties_false() -> None:
     for spec in TOOL_SPECS:
         schema = spec.input_schema
         assert schema.get("type") == "object", f"{spec.name}: root not object"
-        assert schema.get("additionalProperties") is False, f"{spec.name}: additionalProperties not false"
+        assert schema.get("additionalProperties") is False, (
+            f"{spec.name}: additionalProperties not false"
+        )
         assert "properties" in schema, f"{spec.name}: no properties"
         assert "required" in schema, f"{spec.name}: no required"
 
@@ -406,9 +408,7 @@ def test_operation_batch_classification() -> None:
 
 
 def test_batch_exclusions_exhaustive() -> None:
-    non_batchable = {
-        spec.name for spec in TOOL_SPECS if not spec.batch_allowed
-    }
+    non_batchable = {spec.name for spec in TOOL_SPECS if not spec.batch_allowed}
     assert non_batchable == BATCH_EXCLUSIONS, (
         f"batch exclusion mismatch: {BATCH_EXCLUSIONS ^ non_batchable}"
     )
@@ -423,6 +423,7 @@ def test_all_batchable_tools_have_session_id() -> None:
 
 def test_assert_catalog_consistency_runs() -> None:
     assert_catalog_consistency()
+
 
 def test_descriptions_non_empty() -> None:
     for spec in TOOL_SPECS:

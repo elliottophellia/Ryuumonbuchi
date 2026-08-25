@@ -128,7 +128,8 @@ class NativeRunner:
         cwd = working_directory or str(Path.cwd())
 
         timeout_seconds = (
-            timeout_seconds if timeout_seconds is not None
+            timeout_seconds
+            if timeout_seconds is not None
             else self.config.operation_timeout_seconds
         )
 

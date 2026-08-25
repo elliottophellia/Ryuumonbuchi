@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false
-
 import pytest
 
 import ryuumonbuchi.catalog as catalog_module

@@ -104,7 +104,7 @@ class GhidraBackend:
         self,
         pyghidra_module: Any,
         config: BackendConfig,
-    ):
+    ) -> None:
         self._pyghidra = pyghidra_module
         self._config = config
         self._install_dir = config.install_dir
@@ -249,9 +249,7 @@ class GhidraBackend:
                 raise
             suffix = Path(filename or "session.bin").suffix or ".bin"
             fallback_dir = (
-                Path(self._config.workspace_root) / "runs"
-                if self._config.workspace_root
-                else None
+                Path(self._config.workspace_root) / "runs" if self._config.workspace_root else None
             )
             if fallback_dir is not None:
                 fallback_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -381,7 +379,7 @@ class GhidraBackend:
 
         if record.temp_source_path:
             with suppress(OSError):
-                os.unlink(record.temp_source_path)
+                Path(record.temp_source_path).unlink()
         if record.managed_project_root and not project_still_in_use:
             shutil.rmtree(record.managed_project_root, ignore_errors=True)
 
@@ -2297,9 +2295,7 @@ class GhidraBackend:
             program.getMemory().setBytes(span_start, JArray(JByte)(payload))
             return {"method": "raw_bytes", "nop_byte": nop_byte, "bytes_written": span_length}
 
-        result = self._with_write(
-            session_id, f"NOP at {self._addr_str(span_start)}", mutate_raw
-        )
+        result = self._with_write(session_id, f"NOP at {self._addr_str(span_start)}", mutate_raw)
         return {
             "session_id": session_id,
             "address": self._addr_str(span_start),
@@ -2437,6 +2433,7 @@ class GhidraBackend:
             "count": len(copied),
             "items": copied,
         }
+
     def session_export_binary(
         self,
         session_id: str,
@@ -2476,13 +2473,13 @@ class GhidraBackend:
             )
         except Exception as exc:
             with suppress(OSError):
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
             raise GhidraBackendError(f"failed to export binary: {exc}") from exc
         if not ok:
             with suppress(OSError):
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
             raise GhidraBackendError("failed to export binary")
-        os.chmod(tmp_name, 0o600)
+        Path(tmp_name).chmod(0o600)
         self._export_publish(tmp_name, output_path, overwrite=True)
         return {
             "session_id": session_id,
@@ -2522,13 +2519,13 @@ class GhidraBackend:
                 File(tmp_name),
                 self._pyghidra.task_monitor(DEFAULT_ANALYSIS_TIMEOUT),
             )
-            os.chmod(tmp_name, 0o600)
+            Path(tmp_name).chmod(0o600)
             self._export_publish(tmp_name, dest, overwrite=overwrite)
         except GhidraBackendError:
             raise
         except Exception as exc:
             with suppress(OSError):
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
             raise GhidraBackendError(f"failed to export packed file: {exc}") from exc
         return {
             "session_id": session_id,
@@ -2541,9 +2538,7 @@ class GhidraBackend:
         resolved = dest.resolve(strict=False)
         for part in [*resolved.parents, resolved]:
             if part.is_symlink():
-                raise GhidraBackendError(
-                    f"refusing to export through a symlink path: {dest}"
-                )
+                raise GhidraBackendError(f"refusing to export through a symlink path: {dest}")
 
     def _export_stage_file(self, dest: Path) -> tuple[str, str]:
         """Stage to a unique mode-0600 sibling, return (tmp, final) paths."""
@@ -2555,7 +2550,7 @@ class GhidraBackend:
             dir=str(parent),
         )
         os.close(fd)
-        os.chmod(tmp_name, 0o600)
+        Path(tmp_name).chmod(0o600)
         return tmp_name, str(dest)
 
     def _reserve_unique_path(self, dest: Path) -> str:
@@ -2568,22 +2563,20 @@ class GhidraBackend:
                 return str(candidate)
         raise GhidraBackendError("failed to allocate a unique export path")
 
-
-
     def _export_publish(self, tmp_name: str, dest: Path, *, overwrite: bool) -> None:
         """Atomically publish a staged file, never pre-unlinking the target."""
         if dest.exists() or dest.is_symlink():
             if not overwrite:
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
                 raise GhidraBackendError(f"destination already exists: {dest}")
             if dest.is_dir():
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
                 raise GhidraBackendError(f"destination is a directory: {dest}")
         try:
-            os.replace(tmp_name, str(dest))
+            Path(tmp_name).replace(dest)
         except OSError:
             with suppress(OSError):
-                os.unlink(tmp_name)
+                Path(tmp_name).unlink()
             raise
 
     def project_file_delete(
@@ -2599,9 +2592,7 @@ class GhidraBackend:
         # Reject if any open session has this program path
         for other in self._sessions.values():
             if other.program_path == path:
-                raise GhidraBackendError(
-                    f"cannot delete open program: {path}"
-                )
+                raise GhidraBackendError(f"cannot delete open program: {path}")
         project = record.project
         domain_file = project.getFile(path)
         if domain_file is None:
@@ -3007,7 +2998,12 @@ class GhidraBackend:
                         "op": self._pcode_op_record(op),
                     }
                 )
-            for input_varnode in op.getInputs():
+            items.extend(
+                {
+                    "access": "read",
+                    "op": self._pcode_op_record(op),
+                }
+                for input_varnode in op.getInputs()
                 if self._varnode_matches(
                     session_id,
                     input_varnode,
@@ -3015,13 +3011,8 @@ class GhidraBackend:
                     address=address,
                     space=space,
                     size=size,
-                ):
-                    items.append(
-                        {
-                            "access": "read",
-                            "op": self._pcode_op_record(op),
-                        }
-                    )
+                )
+            )
         return {
             "session_id": session_id,
             "function": self._function_record(function),
@@ -3120,14 +3111,13 @@ class GhidraBackend:
             raise GhidraBackendError(
                 "unsupported action; use one of: " + ", ".join(sorted(actions))
             )
-        items = []
-        for func in selected:
-            items.append(
-                {
-                    "function": self._function_record(func),
-                    "result": actions[action](func),
-                }
-            )
+        items = [
+            {
+                "function": self._function_record(func),
+                "result": actions[action](func),
+            }
+            for func in selected
+        ]
         return {
             "session_id": session_id,
             "action": action,
@@ -3372,10 +3362,10 @@ class GhidraBackend:
                 compiled = compile(code, "<ghidra_headless_mcp>", "eval")
             except SyntaxError:
                 compiled = compile(code, "<ghidra_headless_mcp>", "exec")
-                exec(compiled, context, context)
+                exec(compiled, context, context)  # noqa: S102
                 result = context.get("_")
             else:
-                result = eval(compiled, context, context)
+                result = eval(compiled, context, context)  # noqa: S307
         payload: dict[str, Any] = {"result": self._to_jsonable(result)}
         if stdout_buffer.getvalue():
             payload["stdout"] = stdout_buffer.getvalue()
@@ -5748,10 +5738,7 @@ class GhidraBackend:
     def _prune_conflicting_sys_path_entries(self) -> None:
         removable: list[str] = []
         for entry in list(sys.path):
-            if not entry:
-                path = Path.cwd()
-            else:
-                path = Path(entry)
+            path = Path.cwd() if not entry else Path(entry)
             with suppress(OSError):
                 if (path / "ghidra" / "Ghidra" / "application.properties").exists():
                     removable.append(entry)
@@ -6514,9 +6501,7 @@ class GhidraBackend:
         }
 
     def _pcode_op_record(self, op: Any) -> dict[str, Any]:
-        inputs = []
-        for varnode in op.getInputs():
-            inputs.append(self._varnode_record(varnode))
+        inputs = [self._varnode_record(varnode) for varnode in op.getInputs()]
         output = op.getOutput()
         return {
             "opcode": int(op.getOpcode()),
@@ -6964,7 +6949,7 @@ class GhidraBackend:
 
         # Ghidra SourceFile rejects relative paths, so resolve them against the
         # current working directory before handing them over.
-        source_path = path if os.path.isabs(path) else os.path.abspath(path)
+        source_path = path if Path(path).is_absolute() else str(Path(path).absolute())
         if id_type is None:
             return SourceFile(source_path)
         candidate = id_type.upper()
@@ -6977,7 +6962,7 @@ class GhidraBackend:
         return SourceFile(source_path, getattr(SourceFileIdType, candidate), identifier)
 
     def _find_source_file(self, manager: Any, path: str) -> Any:
-        normalized = path if os.path.isabs(path) else os.path.abspath(path)
+        normalized = path if Path(path).is_absolute() else str(Path(path).absolute())
         for source_file in manager.getAllSourceFiles():
             if source_file.getPath() in {path, normalized}:
                 return source_file
@@ -7177,14 +7162,15 @@ class GhidraBackend:
         ordinal: int | None,
         field_name: str | None,
     ) -> Any:
-        matches = []
-        for component in composite.getComponents():
+        matches = [
+            component
+            for component in composite.getComponents()
             if (
                 (offset is not None and int(component.getOffset()) == offset)
                 or (ordinal is not None and int(component.getOrdinal()) == ordinal)
                 or (field_name is not None and component.getFieldName() == field_name)
-            ):
-                matches.append(component)
+            )
+        ]
         if not matches:
             raise GhidraBackendError("component not found")
         if len(matches) > 1:
@@ -7355,11 +7341,7 @@ class GhidraBackend:
         return high_function
 
     def _collect_high_pcode_ops(self, high_function: Any) -> list[Any]:
-        ops: list[Any] = []
-        for block in high_function.getBasicBlocks():
-            for op in block.getIterator():
-                ops.append(op)
-        return ops
+        return [op for block in high_function.getBasicBlocks() for op in block.getIterator()]
 
     def _varnode_matches(
         self,
@@ -7445,7 +7427,8 @@ class GhidraBackend:
 
             return java, target[5:]
         raise GhidraBackendError(
-            "target must start with pyghidra., program., project., flat_api., decompiler., ghidra., or java."
+            "target must start with pyghidra., program., project., flat_api., decompiler., "
+            "ghidra., or java."
         )
 
     def _resolve_attr_path(self, root: Any, attr_path: str) -> Any:

@@ -138,9 +138,12 @@ def _limit_value(
         raise ConfigError(message) from exc
 
 
-def _resolve_classpaths(cli_classpaths: list[str] | None, environ: Mapping[str, str]) -> tuple[str, ...]:
+def _resolve_classpaths(
+    cli_classpaths: list[str] | None, environ: Mapping[str, str]
+) -> tuple[str, ...]:
     """Resolve classpath entries from CLI list and RYUUMONBUCHI_CLASSPATH env."""
     import os as _os
+
     entries: list[str] = []
     if cli_classpaths:
         entries.extend(cli_classpaths)
@@ -157,9 +160,12 @@ def _resolve_classpaths(cli_classpaths: list[str] | None, environ: Mapping[str, 
     return tuple(resolved)
 
 
-def _resolve_class_files(cli_class_files: list[str] | None, environ: Mapping[str, str]) -> tuple[str, ...]:
+def _resolve_class_files(
+    cli_class_files: list[str] | None, environ: Mapping[str, str]
+) -> tuple[str, ...]:
     """Resolve class file entries from CLI list and RYUUMONBUCHI_CLASS_FILES env."""
     import os as _os
+
     entries: list[str] = []
     if cli_class_files:
         entries.extend(cli_class_files)
@@ -179,6 +185,7 @@ def _resolve_class_files(cli_class_files: list[str] | None, environ: Mapping[str
 def _resolve_vm_args(cli_vmargs: list[str] | None, environ: Mapping[str, str]) -> tuple[str, ...]:
     """Parse VM arguments from CLI list and RYUUMONBUCHI_VMARGS env."""
     import shlex
+
     entries: list[str] = []
     if cli_vmargs:
         entries.extend(cli_vmargs)
@@ -186,8 +193,6 @@ def _resolve_vm_args(cli_vmargs: list[str] | None, environ: Mapping[str, str]) -
     if env_va:
         entries.extend(shlex.split(env_va))
     return tuple(entries)
-
-
 
 
 def resolve_ghidra_install_dir(

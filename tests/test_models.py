@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 # pyright: reportUnknownVariableType=false, reportUnknownMemberType=false
-
 import json
 import struct
 
@@ -57,7 +56,6 @@ def test_backend_config_to_dict() -> None:
     assert d["vm_args"] == ["-Dfoo=bar"]
     assert d["classpaths"] == ["/lib"]
     assert d["class_files"] == ["/Test.class"]
-
 
     config = BackendConfig(install_dir=None, max_heap_mb=1024, max_cpu=2)
     assert config.max_heap_mb == 1024
@@ -249,6 +247,8 @@ def test_read_frame_zero_length() -> None:
     assert result == {}
     a.close()
     b.close()
+
+
 def test_async_send_read_frame_roundtrip() -> None:
     import asyncio
     import socket

@@ -9,11 +9,14 @@ import asyncio
 import json
 import os
 import signal
+import socket
 import struct
 import subprocess
 import sys
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .config import AppConfig
@@ -86,8 +89,7 @@ class PersistentWorker:
         self._workspace = workspace
         self._lock = asyncio.Lock()
         self._process: subprocess.Popen[bytes] | None = None
-        self._child_sock: Any = None
-        self._parent_sock: Any = None
+        self._parent_sock: socket.socket | None = None
         self._generation: str = str(uuid.uuid4())
         self._started = False
         self._jvm_started = False
@@ -123,8 +125,6 @@ class PersistentWorker:
         await self._spawn()
 
     async def _spawn(self) -> None:
-        import socket
-
         parent_sock, child_sock = socket.socketpair()
         parent_sock.setblocking(False)
         child_sock.setblocking(True)
@@ -136,7 +136,9 @@ class PersistentWorker:
                 env[key] = val
 
         child_fd = child_sock.fileno()
-        log_fd = os.open(str(self._workspace.worker_log), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        log_fd = os.open(
+            str(self._workspace.worker_log), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+        )
 
         self._process = subprocess.Popen(  # noqa: S603
             [sys.executable, "-m", "ryuumonbuchi.worker"],
@@ -191,10 +193,7 @@ class PersistentWorker:
         timeout: int | None = None,
     ) -> WorkerCall:
         """Execute one tool through the persistent child."""
-        deadline = (
-            timeout if timeout is not None
-            else self._config.operation_timeout_seconds
-        )
+        deadline = timeout if timeout is not None else self._config.operation_timeout_seconds
         request_id = new_request_id()
         request = {
             "schema": SCHEMA_VERSION,
@@ -213,10 +212,7 @@ class PersistentWorker:
         timeout: int | None = None,
     ) -> WorkerCall:
         """Execute an atomic batch through the persistent child."""
-        deadline = (
-            timeout if timeout is not None
-            else self._config.operation_timeout_seconds
-        )
+        deadline = timeout if timeout is not None else self._config.operation_timeout_seconds
         request_id = new_request_id()
         request = {
             "schema": SCHEMA_VERSION,
@@ -279,37 +275,33 @@ class PersistentWorker:
                 loop = asyncio.get_event_loop()
                 if self._parent_sock is not None:
                     await async_send_frame(loop, self._parent_sock, request)
-                    try:
-                        await asyncio.wait_for(
-                            loop.sock_recv(self._parent_sock, 8), timeout=5
-                        )
-                    except (TimeoutError, OSError):
-                        pass
+                    with suppress(TimeoutError, OSError):
+                        await asyncio.wait_for(loop.sock_recv(self._parent_sock, 8), timeout=5)
             except (OSError, WorkerRunError):
                 pass
-            with __import__("contextlib").suppress(ProcessLookupError):
+            with suppress(ProcessLookupError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                with __import__("contextlib").suppress(ProcessLookupError):
+                with suppress(ProcessLookupError):
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 proc.wait(timeout=5)
         if self._parent_sock is not None:
-            with __import__("contextlib").suppress(OSError):
+            with suppress(OSError):
                 self._parent_sock.close()
         self._parent_sock = None
         self._process = None
         self._started = False
         self._jvm_started = False
 
-    async def _request(
-        self, request_id: str, request: dict[str, Any], deadline: int
-    ) -> WorkerCall:
+    async def _request(self, request_id: str, request: dict[str, Any], deadline: int) -> WorkerCall:
         async with self._lock:
             await self._ensure_started()
             loop = asyncio.get_event_loop()
-            assert self._parent_sock is not None
+            if self._parent_sock is None:
+                msg = "worker socket not initialized"
+                raise AssertionError(msg)
 
             try:
                 await async_send_frame(loop, self._parent_sock, request)
@@ -339,7 +331,9 @@ class PersistentWorker:
 
             if response.get("request_id") != request_id:
                 await self._handle_failure("worker_failed")
-                msg = f"request ID mismatch: expected {request_id}, got {response.get('request_id')}"
+                msg = (
+                    f"request ID mismatch: expected {request_id}, got {response.get('request_id')}"
+                )
                 raise WorkerFailedError(msg, self._log_tail)
 
             if not response.get("ok", False):
@@ -360,7 +354,7 @@ class PersistentWorker:
                 result_path = response.get("result_path")
                 if result_path:
                     try:
-                        with open(result_path) as f:
+                        with Path(result_path).open() as f:
                             result = json.load(f)
                     except (OSError, json.JSONDecodeError) as exc:
                         msg = f"failed to read spilled result: {exc}"
@@ -382,15 +376,15 @@ class PersistentWorker:
         self._generation = str(uuid.uuid4())
 
         if parent_sock is not None:
-            with __import__("contextlib").suppress(OSError):
+            with suppress(OSError):
                 parent_sock.close()
         if proc is not None and proc.poll() is None:
-            with __import__("contextlib").suppress(ProcessLookupError):
+            with suppress(ProcessLookupError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                with __import__("contextlib").suppress(ProcessLookupError):
+                with suppress(ProcessLookupError):
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 proc.wait(timeout=5)
 
@@ -402,16 +396,17 @@ class PersistentWorker:
         except OSError:
             pass
 
-    def _read_exact_sync(self, sock: Any, n: int) -> bytes | None:
+    def _read_exact_sync(self, sock: socket.socket, n: int) -> bytes | None:
         return read_exact(sock, n)
 
-    def _read_frame_sync(self, sock: Any) -> dict[str, Any] | None:
+    def _read_frame_sync(self, sock: socket.socket) -> dict[str, Any] | None:
         header = read_exact(sock, 8)
         if header is None or len(header) < 8:
             return None
         (length,) = struct.unpack(">Q", header)
         if length > _MAX_FRAME_BYTES:
-            raise ValueError("frame too large")
+            msg = "frame too large"
+            raise ValueError(msg)
         if length == 0:
             return {}
         body = read_exact(sock, length)

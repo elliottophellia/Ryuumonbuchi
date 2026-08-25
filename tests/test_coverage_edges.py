@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownVariableType=false
-
 import socket
 import struct
 from pathlib import Path
@@ -134,6 +133,7 @@ def test_try_cleanup_workspace_lock_file_unreadable(tmp_path: Path) -> None:
     assert result is True
     assert not root.exists()
 
+
 def test_try_cleanup_workspace_open_oserror(tmp_path: Path) -> None:
     """try_cleanup returns False when lock file can't be opened."""
     root = tmp_path / "stale_perm"
@@ -148,6 +148,7 @@ def test_try_cleanup_workspace_open_oserror(tmp_path: Path) -> None:
         lock.chmod(0o600)
         root.chmod(0o700)
     import shutil
+
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -169,6 +170,7 @@ def test_async_read_frame_truncated_header() -> None:
 
 def test_async_read_frame_frame_too_large() -> None:
     import asyncio
+
     import ryuumonbuchi.models as m
 
     original = m._MAX_FRAME_BYTES

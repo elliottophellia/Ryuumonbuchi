@@ -6,7 +6,6 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-
 import pytest
 
 from ryuumonbuchi.cli import _parser, main
@@ -69,7 +68,9 @@ def test_main_version_prints(capsys: pytest.CaptureFixture[str]) -> None:
     assert "0.3.0" in captured.out
 
 
-def test_main_invalid_config_exits(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_invalid_config_exits(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("GHIDRA_INSTALL_DIR", "/nonexistent/path")
     with pytest.raises(SystemExit) as exc_info:
         main([])
