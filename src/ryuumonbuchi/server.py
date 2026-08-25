@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
@@ -31,6 +33,21 @@ from .process import (
     WorkerOperationError,
 )
 from .session import RuntimeWorkspace
+
+_EXPORT_TOOLS: frozenset[str] = frozenset(
+    {
+        "program.export",
+        "program.export_binary",
+        "program.export_packed",
+        "program.save",
+        "program.save_as",
+        "project.export",
+    }
+)
+
+
+def _is_export_tool(tool_name: str) -> bool:
+    return tool_name in _EXPORT_TOOLS
 
 
 @dataclass(slots=True)
@@ -112,6 +129,40 @@ async def _dispatch_tool(
     if spec is None:
         return _error_result("invalid_params", f"unknown tool: {tool_name}")
 
+    # Validate every tool (including special/native/batch dispatch) against
+    # the authoritative catalog schema immediately after lookup.
+    try:
+        jsonschema.validate(arguments, spec.input_schema, cls=jsonschema.Draft202012Validator)
+    except jsonschema.ValidationError as exc:
+        return _error_result("invalid_params", f"argument validation failed: {exc.message}")
+
+    # Default-deny export and byte-import policy gates (goal 4).
+    if _is_export_tool(tool_name) and not state.config.allow_export:
+        return _error_result(
+            "invalid_params",
+            f"{tool_name} is disabled; set RYUUMONBUCHI_ALLOW_EXPORT=1 to enable",
+        )
+    if tool_name == "program.open_bytes" and not state.config.allow_import_bytes:
+        return _error_result(
+            "invalid_params",
+            "program.open_bytes is disabled; set RYUUMONBUCHI_ALLOW_IMPORT_BYTES=1 to enable",
+        )
+
+    # Preflight decoded base64 size in the parent before worker dispatch.
+    if tool_name == "program.open_bytes":
+        data_base64 = arguments.get("data_base64", "")
+        try:
+            decoded = base64.b64decode(data_base64, validate=True)
+        except (ValueError, binascii.Error):
+            decoded = b""
+        else:
+            if len(decoded) > state.config.max_import_bytes:
+                return _error_result(
+                    "invalid_params",
+                    f"import payload {len(decoded)} bytes exceeds "
+                    f"max_import_bytes {state.config.max_import_bytes}",
+                )
+ 
     # Server-side tools that don't go through the worker
     if tool_name == "health.ping":
         return await _handle_health_ping(state)
@@ -125,12 +176,6 @@ async def _dispatch_tool(
     # Batch tool
     if tool_name == "operation.batch":
         return await _handle_batch(state, arguments)
-
-    # Validate arguments
-    try:
-        jsonschema.validate(arguments, spec.input_schema, cls=jsonschema.Draft202012Validator)
-    except jsonschema.ValidationError as exc:
-        return _error_result("invalid_params", f"argument validation failed: {exc.message}")
 
     # Dispatch to worker
     try:

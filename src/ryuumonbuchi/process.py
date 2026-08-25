@@ -171,6 +171,11 @@ class PersistentWorker:
                 "class_files": list(self._config.class_files),
                 "deterministic": True,
                 "workspace_root": str(self._workspace.root),
+                "max_import_bytes": self._config.max_import_bytes,
+                "max_response_bytes": self._config.max_response_bytes,
+                "max_log_tail_bytes": self._config.max_log_tail_bytes,
+                "allow_export": self._config.allow_export,
+                "allow_import_bytes": self._config.allow_import_bytes,
             },
         }
         await async_send_frame(loop, self._parent_sock, bootstrap)
@@ -381,7 +386,8 @@ class PersistentWorker:
         # Read log tail
         try:
             log_data = self._workspace.worker_log.read_bytes()
-            self._log_tail = log_data[-8192:].decode("utf-8", errors="replace")
+            bound = self._config.max_log_tail_bytes
+            self._log_tail = log_data[-bound:].decode("utf-8", errors="replace")
         except OSError:
             pass
 

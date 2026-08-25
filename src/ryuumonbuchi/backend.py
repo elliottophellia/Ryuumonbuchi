@@ -43,6 +43,12 @@ class BackendConfig:
     classpaths: tuple[str, ...] = ()
     class_files: tuple[str, ...] = ()
     deterministic: bool = True
+    workspace_root: str = ""
+    max_import_bytes: int = 67_108_864
+    max_response_bytes: int = 4_194_304
+    max_log_tail_bytes: int = 65_536
+    allow_export: bool = False
+    allow_import_bytes: bool = False
 
 
 class GhidraBackendError(RuntimeError):
@@ -202,12 +208,21 @@ class GhidraBackend:
         loader: str | None = None,
     ) -> dict[str, Any]:
         self._ensure_started()
+        if not self._config.allow_import_bytes:
+            raise GhidraBackendError(
+                "program.open_bytes is disabled; set RYUUMONBUCHI_ALLOW_IMPORT_BYTES=1 to enable"
+            )
         if not data_base64:
             raise GhidraBackendError("data_base64 is required")
         try:
             raw_bytes = base64.b64decode(data_base64, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise GhidraBackendError(f"invalid base64 data: {exc}") from exc
+        if len(raw_bytes) > self._config.max_import_bytes:
+            raise GhidraBackendError(
+                f"import payload {len(raw_bytes)} bytes exceeds max_import_bytes "
+                f"{self._config.max_import_bytes}"
+            )
 
         effective_program_name = program_name or filename or "session.bin"
         project_root, effective_project_name, managed_project = self._allocate_project(

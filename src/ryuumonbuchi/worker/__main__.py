@@ -37,6 +37,12 @@ def _build_config(raw: dict[str, Any]) -> BackendConfig:
         classpaths=tuple(raw.get("classpaths", [])),
         class_files=tuple(raw.get("class_files", [])),
         deterministic=raw.get("deterministic", True),
+        workspace_root=raw.get("workspace_root", ""),
+        max_import_bytes=raw.get("max_import_bytes", 67_108_864),
+        max_response_bytes=raw.get("max_response_bytes", 4_194_304),
+        max_log_tail_bytes=raw.get("max_log_tail_bytes", 65_536),
+        allow_export=raw.get("allow_export", False),
+        allow_import_bytes=raw.get("allow_import_bytes", False),
     )
 
 

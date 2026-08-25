@@ -30,10 +30,10 @@ def test_build_config_defaults(fake_ghidra: Path) -> None:
     assert config.class_files == ()
 
 
-def test_config_no_allow_export_field(fake_ghidra: Path) -> None:
+def test_config_defaults_deny_export_and_import(fake_ghidra: Path) -> None:
     config = build_config(ghidra_install_dir=str(fake_ghidra))
-    assert not hasattr(config, "allow_export")
-    assert not hasattr(config, "allow_import_bytes")
+    assert config.allow_export is False
+    assert config.allow_import_bytes is False
 
 
 def test_timeout_upper_bound_86400(fake_ghidra: Path) -> None:

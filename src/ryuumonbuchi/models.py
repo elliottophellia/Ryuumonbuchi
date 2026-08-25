@@ -34,6 +34,11 @@ class BackendConfig:
     class_files: tuple[str, ...] = ()
     deterministic: bool = True
     workspace_root: str = ""
+    max_import_bytes: int = 67_108_864
+    max_response_bytes: int = 4_194_304
+    max_log_tail_bytes: int = 65_536
+    allow_export: bool = False
+    allow_import_bytes: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,7 +50,14 @@ class BackendConfig:
             "class_files": list(self.class_files),
             "deterministic": self.deterministic,
             "workspace_root": self.workspace_root,
+            "max_import_bytes": self.max_import_bytes,
+            "max_response_bytes": self.max_response_bytes,
+            "max_log_tail_bytes": self.max_log_tail_bytes,
+            "allow_export": self.allow_export,
+            "allow_import_bytes": self.allow_import_bytes,
         }
+
+
 
 
 @dataclass(frozen=True, slots=True)
