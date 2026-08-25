@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Remaining coverage: model frame limits, session lock paths, catalog assertion branch."""
 
 from __future__ import annotations

@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Real child-worker lifecycle over the inherited-socket FD protocol.
 
 Spawns the actual ``ryuumonbuchi.worker`` entrypoint as a child process and

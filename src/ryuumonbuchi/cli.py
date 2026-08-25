@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Command-line entrypoint with fail-fast Ghidra validation."""
 
 from __future__ import annotations

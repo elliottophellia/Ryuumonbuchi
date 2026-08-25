@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """In-process low-level MCP client smoke test over the real wire protocol.
 
 Exercises tools/list and tools/call against the actual ``Server`` object using

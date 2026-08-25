@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Protocol-v2 wire models for persistent child IPC."""
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false

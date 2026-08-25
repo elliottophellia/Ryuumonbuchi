@@ -76,8 +76,6 @@ The `live_server` marker is separate. It requires `RYUUMONBUCHI_TEST_GHIDRA_URL`
 
 ## Conventions
 
-- SPDX header on every Python file.
-- Preserve the provenance headers in `backend.py` and `catalog.py`.
 - 100-column Ruff formatting.
 - Strict types, except the existing targeted suppressions.
 - Conventional Commit subjects.

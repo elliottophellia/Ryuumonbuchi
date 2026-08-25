@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Native runner: argv byte-for-byte, environment, cwd, exit codes, capture."""
 
 # pyright: reportUnknownVariableType=false, reportUnknownMemberType=false

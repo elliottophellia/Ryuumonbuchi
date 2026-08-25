@@ -1,7 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-# Provenance: backend tool names/schemas ported from
-# mrphrazer/ghidra-headless-mcp@f3af083c339709ed2243d57b7ca56354ff12a117
 """Authoritative 216-tool registry: names, schemas, annotations, batch eligibility."""
 
 from __future__ import annotations

@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Server: catalog listing, tool dispatch, health.ping, response_format."""
 
 from __future__ import annotations

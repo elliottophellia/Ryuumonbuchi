@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Models: frame encoding, decoding, schema validation, roundtrips."""
 
 from __future__ import annotations

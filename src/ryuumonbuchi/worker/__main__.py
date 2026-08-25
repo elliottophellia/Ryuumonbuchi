@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Persistent worker child: frame loop, backend dispatch, IPC."""
 
 # pyright: reportMissingImports=false, reportMissingModuleSource=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportMissingTypeStubs=false, reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false

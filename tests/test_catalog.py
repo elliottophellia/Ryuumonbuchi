@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-# Copyright (C) 2026 Ryuumonbuchi contributors
-
 """Catalog consistency: 216 tools, exact grouped set, no legacy names, schema invariants."""
 
 from __future__ import annotations
