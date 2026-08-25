@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ryuumonbuchi"
-version = "0.4.0"
+version = "0.5.0"
 description = "maybe the headless ghidra mcp you are looking for"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

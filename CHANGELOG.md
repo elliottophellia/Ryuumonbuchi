@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 - 2026-08-26
+
+### Changed
+
+- Split the PyGhidra backend into responsibility-focused mixins behind the unchanged `ryuumonbuchi.backend.GhidraBackend` façade, preserving the 216-tool catalog and 212 backend method contracts.
+
 ## 0.4.0 - 2026-08-26
 
 ### Added
