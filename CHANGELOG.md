@@ -10,6 +10,7 @@
 
 - Rewrote `README.md` from the source, tests, packaging metadata, and release history.
 - Reconstructed the `0.3.0`, `0.2.0`, and `0.1.0` release history below.
+- Restored the `ruff check`, `ruff format --check`, and `pyright` quality gates; fixed lint, formatting, and type diagnostics across `src/` and `tests/` with two narrow per-file exceptions for untyped Java interop (`backend.py`) and the catalog consistency assertions (`catalog.py`).
 
 ## 0.3.0 - 2026-08-25
 
