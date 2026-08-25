@@ -8,29 +8,46 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
 import jsonschema
-from mcp.server.lowlevel.server import Server, NotificationOptions
 from mcp import types as mcp_types
+from mcp.server.lowlevel.server import NotificationOptions, Server
 
 from . import __version__
-from .catalog import TOOL_SPECS, TOOL_BY_NAME
+from .catalog import TOOL_BY_NAME, TOOL_SPECS
 from .config import AppConfig, current_python_version, validate_ghidra_installation
-from .native import NativeRunner, NativeRunError, NativeSpawnError, NativeTimeoutError
+from .native import NativeRunError, NativeRunner, NativeSpawnError, NativeTimeoutError
 from .process import (
     PersistentWorker,
-    WorkerTimeoutError,
     WorkerCancelledError,
     WorkerFailedError,
     WorkerOperationError,
+    WorkerTimeoutError,
 )
 from .session import RuntimeWorkspace
+
+_EXPORT_TOOLS: frozenset[str] = frozenset(
+    {
+        "program.export",
+        "program.export_binary",
+        "program.export_packed",
+        "program.save",
+        "program.save_as",
+        "project.export",
+    }
+)
+
+
+def _is_export_tool(tool_name: str) -> bool:
+    return tool_name in _EXPORT_TOOLS
 
 
 @dataclass(slots=True)
@@ -112,6 +129,40 @@ async def _dispatch_tool(
     if spec is None:
         return _error_result("invalid_params", f"unknown tool: {tool_name}")
 
+    # Validate every tool (including special/native/batch dispatch) against
+    # the authoritative catalog schema immediately after lookup.
+    try:
+        jsonschema.validate(arguments, spec.input_schema, cls=jsonschema.Draft202012Validator)
+    except jsonschema.ValidationError as exc:
+        return _error_result("invalid_params", f"argument validation failed: {exc.message}")
+
+    # Default-deny export and byte-import policy gates (goal 4).
+    if _is_export_tool(tool_name) and not state.config.allow_export:
+        return _error_result(
+            "invalid_params",
+            f"{tool_name} is disabled; set RYUUMONBUCHI_ALLOW_EXPORT=1 to enable",
+        )
+    if tool_name == "program.open_bytes" and not state.config.allow_import_bytes:
+        return _error_result(
+            "invalid_params",
+            "program.open_bytes is disabled; set RYUUMONBUCHI_ALLOW_IMPORT_BYTES=1 to enable",
+        )
+
+    # Preflight decoded base64 size in the parent before worker dispatch.
+    if tool_name == "program.open_bytes":
+        data_base64 = arguments.get("data_base64", "")
+        try:
+            decoded = base64.b64decode(data_base64, validate=True)
+        except (ValueError, binascii.Error):
+            decoded = b""
+        else:
+            if len(decoded) > state.config.max_import_bytes:
+                return _error_result(
+                    "invalid_params",
+                    f"import payload {len(decoded)} bytes exceeds "
+                    f"max_import_bytes {state.config.max_import_bytes}",
+                )
+ 
     # Server-side tools that don't go through the worker
     if tool_name == "health.ping":
         return await _handle_health_ping(state)
@@ -125,12 +176,6 @@ async def _dispatch_tool(
     # Batch tool
     if tool_name == "operation.batch":
         return await _handle_batch(state, arguments)
-
-    # Validate arguments
-    try:
-        jsonschema.validate(arguments, spec.input_schema, cls=jsonschema.Draft202012Validator)
-    except jsonschema.ValidationError as exc:
-        return _error_result("invalid_params", f"argument validation failed: {exc.message}")
 
     # Dispatch to worker
     try:
@@ -264,6 +309,25 @@ async def _handle_batch(
     session_id = arguments.get("session_id", "")
     operations = arguments.get("operations", [])
 
+    # Validate each batch item against its referenced ToolSpec before dispatch.
+    for op in operations:
+        tool = op.get("tool", "")
+        item_spec = TOOL_BY_NAME.get(tool)
+        if item_spec is None:
+            return _error_result("invalid_params", f"unknown tool in batch: {tool}")
+        if not item_spec.batch_allowed:
+            return _error_result("invalid_params", f"tool {tool} is not batchable")
+        item_args = dict(op.get("arguments", {}))
+        if "session_id" not in item_args:
+            item_args["session_id"] = session_id
+        try:
+            jsonschema.validate(
+                item_args, item_spec.input_schema, cls=jsonschema.Draft202012Validator
+            )
+        except jsonschema.ValidationError as exc:
+            return _error_result(
+                "invalid_params", f"argument validation failed for {tool}: {exc.message}"
+            )
     try:
         call = await state.worker.batch(session_id, operations)
         return _success_result("operation.batch", call.result)

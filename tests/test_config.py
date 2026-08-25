@@ -30,10 +30,43 @@ def test_build_config_defaults(fake_ghidra: Path) -> None:
     assert config.class_files == ()
 
 
-def test_config_no_allow_export_field(fake_ghidra: Path) -> None:
+def test_config_defaults_deny_export_and_import(fake_ghidra: Path) -> None:
     config = build_config(ghidra_install_dir=str(fake_ghidra))
-    assert not hasattr(config, "allow_export")
-    assert not hasattr(config, "allow_import_bytes")
+    assert config.allow_export is False
+    assert config.allow_import_bytes is False
+
+
+
+def test_config_allow_export_env_true(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RYUUMONBUCHI_ALLOW_EXPORT", "1")
+    config = build_config(ghidra_install_dir=str(fake_ghidra))
+    assert config.allow_export is True
+
+
+def test_config_allow_export_env_false(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RYUUMONBUCHI_ALLOW_EXPORT", "no")
+    config = build_config(ghidra_install_dir=str(fake_ghidra))
+    assert config.allow_export is False
+
+
+def test_config_allow_import_bytes_env_true(
+    fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RYUUMONBUCHI_ALLOW_IMPORT_BYTES", "true")
+    config = build_config(ghidra_install_dir=str(fake_ghidra))
+    assert config.allow_import_bytes is True
+
+
+def test_config_allow_export_cli_wins(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RYUUMONBUCHI_ALLOW_EXPORT", "0")
+    config = build_config(ghidra_install_dir=str(fake_ghidra), allow_export=True)
+    assert config.allow_export is True
+
+
+def test_config_allow_flag_rejects_invalid(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RYUUMONBUCHI_ALLOW_EXPORT", "maybe")
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        build_config(ghidra_install_dir=str(fake_ghidra))
 
 
 def test_timeout_upper_bound_86400(fake_ghidra: Path) -> None:

@@ -171,6 +171,11 @@ class PersistentWorker:
                 "class_files": list(self._config.class_files),
                 "deterministic": True,
                 "workspace_root": str(self._workspace.root),
+                "max_import_bytes": self._config.max_import_bytes,
+                "max_response_bytes": self._config.max_response_bytes,
+                "max_log_tail_bytes": self._config.max_log_tail_bytes,
+                "allow_export": self._config.allow_export,
+                "allow_import_bytes": self._config.allow_import_bytes,
             },
         }
         await async_send_frame(loop, self._parent_sock, bootstrap)
@@ -278,7 +283,7 @@ class PersistentWorker:
                         await asyncio.wait_for(
                             loop.sock_recv(self._parent_sock, 8), timeout=5
                         )
-                    except (OSError, asyncio.TimeoutError):
+                    except (TimeoutError, OSError):
                         pass
             except (OSError, WorkerRunError):
                 pass
@@ -290,6 +295,9 @@ class PersistentWorker:
                 with __import__("contextlib").suppress(ProcessLookupError):
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 proc.wait(timeout=5)
+        if self._parent_sock is not None:
+            with __import__("contextlib").suppress(OSError):
+                self._parent_sock.close()
         self._parent_sock = None
         self._process = None
         self._started = False
@@ -308,13 +316,17 @@ class PersistentWorker:
                 response = await asyncio.wait_for(
                     async_read_frame(loop, self._parent_sock), timeout=deadline
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 await self._handle_failure("worker_timeout")
                 msg = f"worker timed out after {deadline}s"
                 raise WorkerTimeoutError(msg) from exc
             except (ConnectionError, OSError) as exc:
                 await self._handle_failure("worker_failed")
                 msg = f"worker connection error: {exc}"
+                raise WorkerFailedError(msg, self._log_tail) from exc
+            except ValueError as exc:
+                await self._handle_failure("worker_failed")
+                msg = f"worker sent an invalid frame: {exc}"
                 raise WorkerFailedError(msg, self._log_tail) from exc
             except asyncio.CancelledError:
                 await self._handle_failure("worker_cancelled")
@@ -357,8 +369,9 @@ class PersistentWorker:
             return WorkerCall(request_id=request_id, result=result)
 
     async def _handle_failure(self, code: str) -> None:
-        """Terminate the process group and reset generation."""
+        """Terminate the process group, close sockets, and reset generation."""
         proc = self._process
+        parent_sock = self._parent_sock
         self._parent_sock = None
         self._process = None
         self._started = False
@@ -368,6 +381,9 @@ class PersistentWorker:
         self._active_task_ids = []
         self._generation = str(uuid.uuid4())
 
+        if parent_sock is not None:
+            with __import__("contextlib").suppress(OSError):
+                parent_sock.close()
         if proc is not None and proc.poll() is None:
             with __import__("contextlib").suppress(ProcessLookupError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -381,7 +397,8 @@ class PersistentWorker:
         # Read log tail
         try:
             log_data = self._workspace.worker_log.read_bytes()
-            self._log_tail = log_data[-8192:].decode("utf-8", errors="replace")
+            bound = self._config.max_log_tail_bytes
+            self._log_tail = log_data[-bound:].decode("utf-8", errors="replace")
         except OSError:
             pass
 

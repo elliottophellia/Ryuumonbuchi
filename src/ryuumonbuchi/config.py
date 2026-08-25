@@ -43,6 +43,8 @@ class AppConfig:
     vm_args: tuple[str, ...] = ()
     classpaths: tuple[str, ...] = ()
     class_files: tuple[str, ...] = ()
+    allow_export: bool = False
+    allow_import_bytes: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -65,6 +67,36 @@ _LIMIT_ENV_NAMES: Final = {
     "max_response_bytes": "RYUUMONBUCHI_MAX_RESPONSE_BYTES",
     "max_log_tail_bytes": "RYUUMONBUCHI_MAX_LOG_TAIL_BYTES",
 }
+_BOOL_ENV_NAMES: Final = {
+    "allow_export": "RYUUMONBUCHI_ALLOW_EXPORT",
+    "allow_import_bytes": "RYUUMONBUCHI_ALLOW_IMPORT_BYTES",
+}
+
+
+_TRUE_VALUES: Final = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES: Final = frozenset({"0", "false", "no", "off"})
+
+
+def _bool_flag(
+    name: str,
+    cli_value: bool | None,
+    environ: Mapping[str, str],
+    default: bool,
+) -> bool:
+    if cli_value is not None:
+        return cli_value
+    raw = environ.get(_BOOL_ENV_NAMES[name])
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    message = f"{_BOOL_ENV_NAMES[name]} must be a boolean (1/0, true/false, yes/no, on/off)"
+    raise ConfigError(message)
+
+
 _VERSION_PATTERN: Final = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?(?:[-+].*)?$")
 
 
@@ -179,6 +211,8 @@ def build_config(
     max_import_bytes: int | None = None,
     max_response_bytes: int | None = None,
     max_log_tail_bytes: int | None = None,
+    allow_export: bool | None = None,
+    allow_import_bytes: bool | None = None,
     classpaths: list[str] | None = None,
     class_files: list[str] | None = None,
     vm_args: list[str] | None = None,
@@ -200,6 +234,8 @@ def build_config(
         vm_args=_resolve_vm_args(vm_args, env),
         classpaths=_resolve_classpaths(classpaths, env),
         class_files=_resolve_class_files(class_files, env),
+        allow_export=_bool_flag("allow_export", allow_export, env, False),
+        allow_import_bytes=_bool_flag("allow_import_bytes", allow_import_bytes, env, False),
     )
 
 

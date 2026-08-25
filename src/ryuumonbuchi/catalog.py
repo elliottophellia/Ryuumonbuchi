@@ -118,7 +118,7 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="session_set_mode",
         description="Switch a session between read-only and read-write mode.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "read_only": {"type": "boolean"}, "deterministic": {"type": "boolean"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=False, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="analysis.status",
@@ -132,14 +132,14 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="analysis_update",
         description="Start auto-analysis in the background and return immediately.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="analysis.update_and_wait",
         backend_method="analysis_update_and_wait",
         description="Run auto-analysis and wait until it completes.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="analysis.options.list",
@@ -545,7 +545,7 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="type_apply_at",
         description="Apply a data type at an address in the listing.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "address": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "data_type": {"type": "string"}, "length": {"type": "integer"}, "clear_existing": {"type": "boolean"}}, "required": ["session_id", "address", "data_type"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="layout.struct.create",
@@ -594,42 +594,42 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="patch_nop",
         description="Replace instructions in a range with NOP bytes.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "address": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "count": {"type": "integer"}}, "required": ["session_id", "address"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="patch.branch_invert",
         backend_method="patch_branch_invert",
         description="Invert a conditional branch instruction in place.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "address": {"oneOf": [{"type": "integer"}, {"type": "string"}]}}, "required": ["session_id", "address"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="program.save",
         backend_method="session_save",
         description="Save the current program state back into the project.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="program.save_as",
         backend_method="session_save_as",
         description="Save the current program under a new project path or name.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "program_name": {"type": "string"}, "folder_path": {"type": "string"}, "overwrite": {"type": "boolean"}}, "required": ["session_id", "program_name"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="project.export",
         backend_method="session_export_project",
         description="Export the current Ghidra project artifacts to a destination directory.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "destination": {"type": "string"}}, "required": ["session_id", "destination"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="program.export_binary",
         backend_method="session_export_binary",
         description="Export the program to disk as either the original-file format or raw bytes.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "path": {"type": "string"}, "format": {"type": "string"}}, "required": ["session_id", "path"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="bookmark.add",
@@ -685,14 +685,14 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="analysis_analyzers_set",
         description="Enable or disable a specific boolean analyzer for the current program.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "name": {"type": "string"}, "enabled": {"type": "boolean"}}, "required": ["session_id", "name", "enabled"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="analysis.clear_cache",
         backend_method="analysis_clear_cache",
         description="Clear cached decompiler state for the current session so later requests rebuild it cleanly.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=False, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="memory.block.create",
@@ -783,35 +783,35 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="undo_begin",
         description="Begin an explicit undo transaction for grouped changes.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "description": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="transaction.commit",
         backend_method="undo_commit",
         description="Commit the active transaction so its changes become undoable.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="transaction.revert",
         backend_method="undo_revert",
         description="Roll back the active transaction without committing it.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="transaction.undo",
         backend_method="undo_undo",
         description="Undo the most recently committed change.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="transaction.redo",
         backend_method="undo_redo",
         description="Reapply the most recently undone change.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="transaction.status",
@@ -825,7 +825,7 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="task_analysis_update",
         description="Start auto-analysis as a tracked background task and return a task ID.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=False,
+        read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
     specs.append(ToolSpec(
         name="task.status",
@@ -1287,28 +1287,28 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         backend_method="parameter_add",
         description="Add a new parameter to a function with a chosen type and storage.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "function_start": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "name": {"type": "string"}, "data_type": {"type": "string"}, "ordinal": {"type": "integer"}, "stack_offset": {"type": "integer"}, "register": {"type": "string"}}, "required": ["session_id", "function_start", "name", "data_type"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="parameter.remove",
         backend_method="parameter_remove",
         description="Remove a parameter from a function by ordinal or name.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "function_start": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "ordinal": {"type": "integer"}, "name": {"type": "string"}}, "required": ["session_id", "function_start"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="parameter.move",
         backend_method="parameter_move",
         description="Reorder a parameter to a new ordinal within the signature.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "function_start": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "ordinal": {"type": "integer"}, "new_ordinal": {"type": "integer"}}, "required": ["session_id", "function_start", "ordinal", "new_ordinal"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="parameter.replace",
         backend_method="parameter_replace",
         description="Replace an existing parameter definition by ordinal or name.",
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "function_start": {"oneOf": [{"type": "integer"}, {"type": "string"}]}, "ordinal": {"type": "integer"}, "name": {"type": "string"}, "new_name": {"type": "string"}, "data_type": {"type": "string"}, "stack_offset": {"type": "integer"}, "register": {"type": "string"}}, "required": ["session_id", "function_start"], "additionalProperties": False},
-        read_only=True, destructive=False, open_world=False, batch_allowed=True,
+        read_only=False, destructive=True, open_world=False, batch_allowed=True,
     ))
     specs.append(ToolSpec(
         name="variable.local.create",
@@ -1553,7 +1553,7 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         name="headless.run",
         backend_method=None,
         description="Run the installed Ghidra analyzeHeadless launcher with exact argv. Full filesystem/process/network access enabled by default; runs in a child process group.",
-        input_schema={"type": "object", "properties": {"arguments": {"type": "array", "items": {"type": "string"}}, "working_directory": {"type": ["string", "None"]}, "environment": {"type": "object", "additionalProperties": {"type": "string"}}, "stdin_text": {"type": ["string", "None"]}, "terminal": {"type": "boolean"}, "timeout_seconds": {"type": ["integer", "None"]}}, "required": ["arguments"], "additionalProperties": False},
+        input_schema={"type": "object", "properties": {"arguments": {"type": "array", "items": {"type": "string"}, "maxItems": 1000}, "working_directory": {"type": ["string", "null"]}, "environment": {"type": "object", "additionalProperties": {"type": "string"}}, "stdin_text": {"type": ["string", "null"]}, "terminal": {"type": "boolean"}, "timeout_seconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 86400}}, "required": ["arguments"], "additionalProperties": False},
         read_only=False, destructive=True, open_world=True, batch_allowed=False,
     ))
     specs.append(ToolSpec(
@@ -1563,11 +1563,49 @@ def _build_specs() -> tuple[ToolSpec, ...]:
         input_schema={"type": "object", "properties": {"session_id": {"type": "string"}, "operations": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "object", "properties": {"tool": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["tool"], "additionalProperties": False}}}, "required": ["session_id", "operations"], "additionalProperties": False},
         read_only=False, destructive=True, open_world=False, batch_allowed=False,
     ))
-    return tuple(specs)
+    return tuple(_apply_schema_bounds(specs))
+
+
+_INT_BOUNDS: dict[str, dict[str, int]] = {
+    "offset": {"minimum": 0, "maximum": 10_000_000},
+    "limit": {"minimum": 1, "maximum": 100_000},
+    "count": {"minimum": 1, "maximum": 1_000_000},
+    "max_depth": {"minimum": 1, "maximum": 64},
+    "timeout_secs": {"minimum": 1, "maximum": 86400},
+    "length": {"minimum": 1, "maximum": 512 * 1024 * 1024},
+    "byte_length": {"minimum": 1, "maximum": 512 * 1024 * 1024},
+    "size": {"minimum": 1, "maximum": 1_000_000_000},
+    "bit_size": {"minimum": 1, "maximum": 1_000_000_000},
+    "operand_index": {"minimum": 0, "maximum": 255},
+    "ordinal": {"minimum": 0, "maximum": 1_000_000},
+    "new_ordinal": {"minimum": 0, "maximum": 1_000_000},
+}
+
+_STRING_BOUNDS: dict[str, int] = {
+    "session_id": 64,
+    "data_base64": 1_000_000_000,
+    "data_hex": 1_000_000_000,
+    "pattern_base64": 1_000_000_000,
+    "pattern_hex": 1_000_000_000,
+}
+
+
+def _apply_schema_bounds(specs: list[ToolSpec]) -> list[ToolSpec]:
+    """Add explicit bounds to limit/offset/count/depth/timeout and payloads."""
+    for spec in specs:
+        props: dict[str, Any] = spec.input_schema.get("properties", {})
+        for prop_name, prop_schema in props.items():
+            if prop_schema.get("type") == "integer" and prop_name in _INT_BOUNDS:
+                for key, value in _INT_BOUNDS[prop_name].items():
+                    prop_schema.setdefault(key, value)
+            if prop_schema.get("type") == "string" and prop_name in _STRING_BOUNDS:
+                prop_schema.setdefault("maxLength", _STRING_BOUNDS[prop_name])
+    return specs
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = _build_specs()
 TOOL_BY_NAME: dict[str, ToolSpec] = {spec.name: spec for spec in TOOL_SPECS}
+
 
 
 def get_tool(name: str) -> ToolSpec | None:
@@ -1576,17 +1614,50 @@ def get_tool(name: str) -> ToolSpec | None:
 
 
 def assert_catalog_consistency() -> None:
-    """Verify no duplicates, exact count, no underscore legacy names."""
+    """Verify no duplicates, exact count, no underscore legacy names, valid
+    Draft 2020-12 schemas, complete special routing, and mutation/read-only
+    classification."""
+    import jsonschema
+
     names = [spec.name for spec in TOOL_SPECS]
     assert len(names) == len(set(names)), "duplicate tool names"
     assert len(TOOL_SPECS) == 216, f"expected 216 tools, got {len(TOOL_SPECS)}"
     for name in names:
         assert "." in name, f"non-dotted tool name: {name}"
-    # Check arrays have items
+
+    # Valid Draft 2020-12 schemas.
+    Draft202012Validator = jsonschema.Draft202012Validator
+    special = {"health.ping", "mcp.response_format", "headless.run", "operation.batch"}
+    import inspect
+
+    from .backend import GhidraBackend
+
     for spec in TOOL_SPECS:
+        Draft202012Validator.check_schema(spec.input_schema)
         for prop_name, prop_schema in spec.input_schema.get("properties", {}).items():
             if prop_schema.get("type") == "array" and "items" not in prop_schema:
                 raise AssertionError(f"{spec.name}.{prop_name}: array without items")
-    # Verify every backend method has a spec and vice versa
+        if spec.name in special:
+            assert (
+                spec.backend_method is None
+            ), f"{spec.name}: special tool must have no backend method"
+        else:
+            assert (
+                spec.backend_method is not None
+            ), f"{spec.name}: non-special tool missing backend method"
+            method = getattr(GhidraBackend, spec.backend_method, None)
+            assert method is not None, f"{spec.name}: missing backend method {spec.backend_method}"
+            signature = inspect.signature(method)
+            params = {
+                name
+                for name, param in signature.parameters.items()
+                if name != "self" and param.default is inspect.Parameter.empty
+            }
+            required = set(spec.input_schema.get("required", []))
+            assert params == required, (
+                f"{spec.name}: backend required {sorted(params)} != "
+                f"catalog required {sorted(required)}"
+            )
+
     backend_methods = {spec.backend_method for spec in TOOL_SPECS if spec.backend_method}
     assert len(backend_methods) == 212, f"expected 212 backend methods, got {len(backend_methods)}"

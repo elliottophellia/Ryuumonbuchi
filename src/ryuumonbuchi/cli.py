@@ -29,6 +29,10 @@ def _parser() -> argparse.ArgumentParser:
                         help="additional Java classpath entry (repeatable)")
     parser.add_argument("--class-file", action="append", default=[], metavar="PATH",
                         help="additional Java class file to load (repeatable)")
+    parser.add_argument("--allow-export", action="store_true", default=None,
+                        help="enable filesystem export/save tools (default: deny)")
+    parser.add_argument("--allow-import-bytes", action="store_true", default=None,
+                        help="enable program.open_bytes byte import (default: deny)")
     parser.add_argument("--vmarg", action="append", default=[], metavar="ARG",
                         help="additional JVM argument (repeatable)")
     parser.add_argument("--version", action="store_true", help="print the package version and exit")
@@ -54,6 +58,8 @@ def main(argv: list[str] | None = None) -> None:
             classpaths=args.classpath or None,
             class_files=args.class_file or None,
             vm_args=args.vmarg or None,
+            allow_export=args.allow_export,
+            allow_import_bytes=args.allow_import_bytes,
         )
         validate_config(config)
         run_server(config)

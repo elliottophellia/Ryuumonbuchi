@@ -37,6 +37,12 @@ def _build_config(raw: dict[str, Any]) -> BackendConfig:
         classpaths=tuple(raw.get("classpaths", [])),
         class_files=tuple(raw.get("class_files", [])),
         deterministic=raw.get("deterministic", True),
+        workspace_root=raw.get("workspace_root", ""),
+        max_import_bytes=raw.get("max_import_bytes", 67_108_864),
+        max_response_bytes=raw.get("max_response_bytes", 4_194_304),
+        max_log_tail_bytes=raw.get("max_log_tail_bytes", 65_536),
+        allow_export=raw.get("allow_export", False),
+        allow_import_bytes=raw.get("allow_import_bytes", False),
     )
 
 
@@ -65,26 +71,29 @@ def _to_jsonable(obj: Any) -> Any:
     return str(obj)
 
 
-def _should_spill(result: Any) -> bool:
+def _should_spill(result: Any, max_response_bytes: int) -> bool:
     try:
         data = json.dumps(result, ensure_ascii=False, default=str)
-        return len(data.encode("utf-8")) > _MAX_RESPONSE_BYTES
+        return len(data.encode("utf-8")) > max_response_bytes
     except (TypeError, ValueError):
         return False
 
 
 def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
-    try:
-        data = json.dumps(result, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        data = json.dumps({"error": "result not serializable"})
+    data = json.dumps(_to_jsonable(result), ensure_ascii=False, default=str)
     raw = data.encode("utf-8")
     run_dir = Path(workspace_root) / "runs"
     run_dir.mkdir(mode=0o700, exist_ok=True)
     spill_path = run_dir / f"result-{uuid4().hex}.json"
     fd = os.open(str(spill_path), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
-    os.write(fd, raw)
-    os.close(fd)
+    written = 0
+    try:
+        view = memoryview(raw)
+        while written < len(raw):
+            written += os.write(fd, view[written:])
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     preview = data[:_SPILL_PREFIX_BYTES]
     if len(data) > _SPILL_PREFIX_BYTES:
         preview += "...[truncated]"
@@ -96,6 +105,12 @@ def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
     }
 
 
+# Configured response byte cap, set once from the bootstrap config in main().
+_max_response_bytes_configured = _MAX_RESPONSE_BYTES
+
+
+
+
 def _send_response(payload: dict[str, Any]) -> None:
     assert _SOCK is not None, "worker socket not initialized"
     data = frame_message(payload)
@@ -103,23 +118,27 @@ def _send_response(payload: dict[str, Any]) -> None:
 
 
 def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> None:
-    if workspace_root and _should_spill(result):
-        spill = _spill_result(result, workspace_root)
-        response = {
+    jsonable = _to_jsonable(result)
+    if workspace_root and _should_spill(jsonable, _max_response_bytes_configured):
+        spill = _spill_result(jsonable, workspace_root)
+        response: dict[str, Any] = {
             "schema": SCHEMA_VERSION,
             "request_id": request_id,
             "ok": True,
-            "result": spill,
+            "result": None,
+            "spilled": True,
+            "result_path": spill["result_path"],
+            "preview": spill["preview"],
+            "total_bytes": spill["total_bytes"],
         }
     else:
         response = {
             "schema": SCHEMA_VERSION,
             "request_id": request_id,
             "ok": True,
-            "result": _to_jsonable(result),
+            "result": jsonable,
         }
     _send_response(response)
-
 
 def _send_error(request_id: str, code: str, message: str, **extra: Any) -> None:
     error: dict[str, Any] = {"code": code, "message": message}
@@ -129,6 +148,7 @@ def _send_error(request_id: str, code: str, message: str, **extra: Any) -> None:
         "request_id": request_id,
         "ok": False,
         "error": error,
+        "code": code,
     }
     _send_response(response)
 
@@ -139,8 +159,20 @@ def _dispatch_call(backend: GhidraBackend, tool: str, arguments: dict[str, Any])
         raise GhidraBackendError(f"unknown tool: {tool}")
     if spec.backend_method is None:
         raise GhidraBackendError(f"tool {tool} has no backend method")
+    _validate_arguments(spec, arguments)
     method = getattr(backend, spec.backend_method)
     return method(**arguments)
+
+
+def _validate_arguments(spec: Any, arguments: dict[str, Any]) -> None:
+    import jsonschema
+
+    try:
+        jsonschema.validate(
+            arguments, spec.input_schema, cls=jsonschema.Draft202012Validator
+        )
+    except jsonschema.ValidationError as exc:
+        raise GhidraBackendError(f"argument validation failed: {exc.message}") from exc
 
 
 def _dispatch_batch(
@@ -168,6 +200,7 @@ def _dispatch_batch(
             raise GhidraBackendError(f"unknown tool in batch: {tool}")
         if not spec.batch_allowed:
             raise GhidraBackendError(f"tool {tool} is not batchable")
+        _validate_arguments(spec, args)
         mutates = not spec.read_only
         any_mutates = any_mutates or mutates
         validated.append((tool, args, spec.read_only))
@@ -183,6 +216,10 @@ def _dispatch_batch(
                     "Ryuumonbuchi operation.batch"
                 )
             )
+            # Mark the outer transaction on the record so nested _with_write
+            # calls reuse it instead of opening independent commits.
+            record.active_transaction_id = tx_id
+            record.active_transaction_description = "Ryuumonbuchi operation.batch"
 
         for tool, args, _read_only in validated:
             try:
@@ -192,11 +229,15 @@ def _dispatch_batch(
                 if tx_id is not None:
                     backend._get_program(session_id).endTransaction(tx_id, False)  # noqa: SLF001
                     tx_id = None
+                    record.active_transaction_id = None
+                    record.active_transaction_description = None
                 raise
 
         if tx_id is not None:
             backend._get_program(session_id).endTransaction(tx_id, True)  # noqa: SLF001
             tx_id = None
+            record.active_transaction_id = None
+            record.active_transaction_description = None
             with suppress(Exception):
                 record.project.save(record.program)
 
@@ -204,6 +245,8 @@ def _dispatch_batch(
         if tx_id is not None:
             with suppress(Exception):
                 backend._get_program(session_id).endTransaction(tx_id, False)  # noqa: SLF001
+        record.active_transaction_id = None
+        record.active_transaction_description = None
         raise
 
     return {"results": results}
@@ -243,6 +286,8 @@ def main() -> int:
 
     backend = GhidraBackend(pyghidra, config)
     workspace_root = raw_config.get("workspace_root", "")
+    global _max_response_bytes_configured
+    _max_response_bytes_configured = config.max_response_bytes
 
     # Frame loop
     while True:
@@ -262,7 +307,7 @@ def main() -> int:
 
         try:
             request = parse_message(body)
-        except ValueError as exc:
+        except ValueError:
             # Can't respond without a request_id
             continue
 
