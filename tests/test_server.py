@@ -7,6 +7,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from ryuumonbuchi import __version__
 from ryuumonbuchi.catalog import TOOL_BY_NAME, TOOL_SPECS
 from ryuumonbuchi.config import AppConfig
 from ryuumonbuchi.native import NativeRunner
@@ -124,7 +125,7 @@ def test_dispatch_health_ping(workspace: RuntimeWorkspace, fake_ghidra: Path) ->
     text = result[1].text if len(result) > 1 else result[0].text
     data = json.loads(text)  # type: ignore[arg-type]
     assert data["status"] == "ok"
-    assert data["package_version"] == "0.3.0"
+    assert data["package_version"] == __version__
 
 
 def test_dispatch_response_format(workspace: RuntimeWorkspace, fake_ghidra: Path) -> None:

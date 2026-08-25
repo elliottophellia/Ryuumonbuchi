@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from ryuumonbuchi import __version__
 from ryuumonbuchi.cli import _parser, main
 
 
@@ -62,7 +63,7 @@ def test_parser_no_args_defaults() -> None:
 def test_main_version_prints(capsys: pytest.CaptureFixture[str]) -> None:
     main(["--version"])
     captured = capsys.readouterr()
-    assert "0.3.0" in captured.out
+    assert __version__ in captured.out
 
 
 def test_main_invalid_config_exits(
@@ -79,4 +80,4 @@ def test_main_module_entrypoint(capsys: pytest.CaptureFixture[str]) -> None:
 
     module_main(["--version"])
     captured = capsys.readouterr()
-    assert "0.3.0" in captured.out
+    assert __version__ in captured.out
