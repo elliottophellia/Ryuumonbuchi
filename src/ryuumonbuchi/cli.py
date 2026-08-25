@@ -16,12 +16,21 @@ from .server import main as run_server
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ryuumonbuchi",
-        description="Headless Ghidra MCP server with one-shot worker isolation.",
+        description="Headless Ghidra MCP server with persistent worker isolation.",
     )
     parser.add_argument("--ghidra-install-dir", metavar="PATH")
     parser.add_argument("--max-heap-mb", type=int, metavar="MIB")
     parser.add_argument("--max-cpu", type=int, metavar="COUNT")
     parser.add_argument("--operation-timeout-seconds", type=int, metavar="SECONDS")
+    parser.add_argument("--max-import-bytes", type=int, metavar="BYTES")
+    parser.add_argument("--max-response-bytes", type=int, metavar="BYTES")
+    parser.add_argument("--max-log-tail-bytes", type=int, metavar="BYTES")
+    parser.add_argument("--classpath", action="append", default=[], metavar="PATH",
+                        help="additional Java classpath entry (repeatable)")
+    parser.add_argument("--class-file", action="append", default=[], metavar="PATH",
+                        help="additional Java class file to load (repeatable)")
+    parser.add_argument("--vmarg", action="append", default=[], metavar="ARG",
+                        help="additional JVM argument (repeatable)")
     parser.add_argument("--version", action="store_true", help="print the package version and exit")
     return parser
 
@@ -39,6 +48,12 @@ def main(argv: list[str] | None = None) -> None:
             max_heap_mb=args.max_heap_mb,
             max_cpu=args.max_cpu,
             operation_timeout_seconds=args.operation_timeout_seconds,
+            max_import_bytes=args.max_import_bytes,
+            max_response_bytes=args.max_response_bytes,
+            max_log_tail_bytes=args.max_log_tail_bytes,
+            classpaths=args.classpath or None,
+            class_files=args.class_file or None,
+            vm_args=args.vmarg or None,
         )
         validate_config(config)
         run_server(config)

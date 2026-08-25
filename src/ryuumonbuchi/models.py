@@ -1,578 +1,279 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
 
-"""Pydantic wire models and bounded operation payloads."""
+"""Protocol-v2 wire models for persistent child IPC."""
+
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
+import json
+import struct
+import uuid
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from typing import Any
+if TYPE_CHECKING:
+    import asyncio
+    from socket import socket
 
-from datetime import datetime
-from typing import Annotated, Any, Literal, Self
+SCHEMA_VERSION = 2
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    field_validator,
-    model_validator,
-)
-
-PageSize = Annotated[int, Field(ge=1, le=500)]
-Offset = Annotated[int, Field(ge=0)]
-TimeoutSeconds = Annotated[int, Field(ge=1, le=600)]
-AnalysisTimeoutSeconds = Annotated[int, Field(ge=1, le=3600)]
-Count = Annotated[int, Field(ge=1, le=100)]
-GraphDepth = Annotated[int, Field(ge=1, le=5)]
-GraphNodes = Annotated[int, Field(ge=1, le=500)]
-ProgramName = Annotated[str, StringConstraints(min_length=1, max_length=128)]
-HexPattern = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
-CommentText = Annotated[str, StringConstraints(max_length=1_048_576)]
-MinStringLength = Annotated[int, Field(ge=1, le=4096)]
+# Frame format: 8-byte big-endian unsigned length + UTF-8 JSON payload
+_MAX_FRAME_BYTES = 512 * 1024 * 1024  # 512 MiB hard limit per frame
 
 
-class WireModel(BaseModel):
-    """Reject fields that are not part of the wire contract."""
+@dataclass(frozen=True, slots=True)
+class BackendConfig:
+    """Immutable backend startup configuration passed to the persistent child."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-
-class Page[T](WireModel):
-    """One bounded page of results."""
-
-    items: list[T]
-    offset: int = Field(ge=0)
-    limit: int = Field(ge=1, le=500)
-    has_more: bool
-
-
-class HealthResult(WireModel):
-    package_version: str
-    python_version: str
-    ghidra_path: str
-    ghidra_version: str
+    install_dir: str | None
     max_heap_mb: int
     max_cpu: int
-    operation_timeout_seconds: int
-    max_response_bytes: int
-    max_log_tail_bytes: int
+    vm_args: tuple[str, ...] = ()
+    classpaths: tuple[str, ...] = ()
+    class_files: tuple[str, ...] = ()
+    deterministic: bool = True
+    workspace_root: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "install_dir": self.install_dir,
+            "max_heap_mb": self.max_heap_mb,
+            "max_cpu": self.max_cpu,
+            "vm_args": list(self.vm_args),
+            "classpaths": list(self.classpaths),
+            "class_files": list(self.class_files),
+            "deterministic": self.deterministic,
+            "workspace_root": self.workspace_root,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapMessage:
+    """Initial parent-to-child message with runtime configuration."""
+
+    schema: int
+    config: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"schema": SCHEMA_VERSION, "config": self.config}
+
+    def to_bytes(self) -> bytes:
+        return frame_message(self.to_dict())
+
+
+@dataclass(frozen=True, slots=True)
+class CallRequest:
+    """Parent-to-child: execute one tool."""
+
+    schema: int
+    request_id: str
+    kind: str  # always "call"
+    tool: str
+    arguments: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "kind": "call",
+            "tool": self.tool,
+            "arguments": self.arguments,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRequest:
+    """Parent-to-child: execute an atomic batch of operations."""
+
+    schema: int
+    request_id: str
+    kind: str  # always "batch"
     session_id: str
-    tracked_program_count: int = Field(ge=0)
-    worker_running: Literal[False] = False
-    project_open: Literal[False] = False
+    operations: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "kind": "batch",
+            "session_id": self.session_id,
+            "operations": self.operations,
+        }
 
 
-class SessionStatus(WireModel):
-    session_id: str
-    root_created_at: datetime
-    programs: list[str]
-    active_worker_pid: int | None
-    last_worker_pid: int | None
-    project_open: Literal[False] = False
+@dataclass(frozen=True, slots=True)
+class StatusRequest:
+    """Parent-to-child: query backend status without starting the JVM."""
+
+    schema: int
+    request_id: str
+    kind: str  # always "status"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "kind": "status",
+        }
 
 
-class SessionClearResult(WireModel):
-    old_session_id: str
-    new_session_id: str
+@dataclass(frozen=True, slots=True)
+class ShutdownRequest:
+    """Parent-to-child: gracefully shut down the backend."""
+
+    schema: int
+    request_id: str
+    kind: str  # always "shutdown"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "kind": "shutdown",
+        }
 
 
-class ProgramImportResult(WireModel):
-    program_name: str
-    source_sha256: str
-    ghidra_version: str
-    analyzed: bool
+@dataclass(frozen=True, slots=True)
+class SuccessResponse:
+    """Child-to-parent: successful result, possibly spilled to a file."""
 
-
-class ProgramDeleteResult(WireModel):
-    program_name: str
-    deleted: bool = True
-
-
-class ProgramInfo(WireModel):
-    program_name: str
-    source_path: str
-    source_sha256: str
-    imported_at: datetime
-    analyzed: bool
-    ghidra_version: str
-    language_id: str | None = None
-    processor: str | None = None
-
-
-class ProgramListResult(WireModel):
-    programs: list[ProgramInfo]
-
-
-class FunctionSummary(WireModel):
-    name: str
-    address: str
-    entry_address: str
-    size: int | None = Field(default=None, ge=0)
-    namespace: str | None = None
-
-
-class FunctionDetail(FunctionSummary):
-    signature: str | None = None
-    calling_convention: str | None = None
-    comment: str | None = None
-    parameters: list[str] = Field(default_factory=list)
-    return_type: str | None = None
-
-
-class DecompileResult(WireModel):
-    function_name: str
-    address: str
-    c_code: str
-    truncated: bool = False
-
-
-class Instruction(WireModel):
-    address: str
-    mnemonic: str
-    operands: str
-    text: str
-    length: int = Field(ge=0)
-    bytes_hex: str
-
-
-class DefinedData(WireModel):
-    address: str
-    data_type: str
-    value: str | None = None
-    length: int = Field(ge=0)
-
-
-class MemoryBlock(WireModel):
-    name: str
-    start: str
-    end: str
-    size: int = Field(ge=0)
-    read: bool
-    write: bool
-    execute: bool
-
-
-class MemoryReadResult(WireModel):
-    address: str
-    requested_length: int = Field(ge=1, le=65_536)
-    actual_length: int = Field(ge=0, le=65_536)
-    bytes_hex: str
-
-
-class StringMatch(WireModel):
-    address: str
-    value: str
-    length: int = Field(ge=0)
-
-
-class SymbolMatch(WireModel):
-    name: str
-    address: str
-    symbol_type: str
-    namespace: str | None = None
-
-
-class ImportSymbol(WireModel):
-    name: str
-    address: str | None = None
-    library: str | None = None
-
-
-class ExportSymbol(WireModel):
-    name: str
-    address: str
-    ordinal: int | None = None
-
-
-class Reference(WireModel):
-    from_address: str
-    to_address: str
-    reference_type: str
-    operand_index: int | None = None
-
-
-class CallGraphNode(WireModel):
-    address: str
-    name: str
-    depth: int = Field(ge=0, le=5)
-
-
-class CallGraphEdge(WireModel):
-    from_address: str
-    to_address: str
-
-
-class CallGraph(WireModel):
-    root: CallGraphNode
-    nodes: list[CallGraphNode]
-    edges: list[CallGraphEdge]
-    truncated: bool = False
-
-
-class AddressMatch(WireModel):
-    address: str
-
-
-class AnalysisResult(WireModel):
-    analyzed: bool
-    log: str = ""
-
-
-class AnalysisOptions(WireModel):
-    values: dict[str, bool | int | float | str]
-
-
-class AnalyzerSummary(WireModel):
-    name: str
-    analyzer_class: str
-    type: str
-    default_enabled: bool
-    can_analyze: bool
-    prototype: bool = False
-
-
-class AnalysisListAnalyzersOperation(WireModel):
-    action: Literal["analysis_list_analyzers"] = "analysis_list_analyzers"
-    query: str | None = None
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class SetDataTypeOperation(WireModel):
-    action: Literal["edit_set_data_type"] = "edit_set_data_type"
-    address: str
-    data_type: str = Field(min_length=1, max_length=256)
-    length: int | None = Field(default=None, ge=1, le=1_048_576)
-
-
-class MutationResult(WireModel):
-    changed: bool
-    program_name: str
-    description: str
-
-
-class BatchItem(WireModel):
-    action: str
+    schema: int
+    request_id: str
+    ok: bool  # always True
     result: Any
-
-
-class BatchResult(WireModel):
-    results: list[BatchItem]
-
-
-class SelectorOperation(WireModel):
-    """Operation base requiring exactly one function selector."""
-
-    address: str | None = None
-    name: str | None = None
-
-    @model_validator(mode="after")
-    def exactly_one_selector(self) -> Self:
-        if (self.address is None) == (self.name is None):
-            message = "exactly one of address or name is required"
-            raise ValueError(message)
-        return self
-
-
-class FunctionListOperation(WireModel):
-    action: Literal["function_list"] = "function_list"
-    query: str | None = None
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class FunctionGetOperation(SelectorOperation):
-    action: Literal["function_get"] = "function_get"
-
-
-class FunctionDecompileOperation(SelectorOperation):
-    action: Literal["function_decompile"] = "function_decompile"
-    timeout_seconds: TimeoutSeconds = 60
-
-
-class ListingDisassembleOperation(WireModel):
-    action: Literal["listing_disassemble"] = "listing_disassemble"
-    address: str | None = None
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class ListingDataOperation(WireModel):
-    action: Literal["listing_data"] = "listing_data"
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class MemoryBlocksOperation(WireModel):
-    action: Literal["memory_blocks"] = "memory_blocks"
-
-
-class MemoryReadOperation(WireModel):
-    action: Literal["memory_read"] = "memory_read"
-    address: str
-    length: int = Field(ge=1, le=65_536)
-
-
-class SearchStringsOperation(WireModel):
-    action: Literal["search_strings"] = "search_strings"
-    query: str | None = None
-    min_length: MinStringLength = 4
-    defined_only: bool = False
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class SearchSymbolsOperation(WireModel):
-    action: Literal["search_symbols"] = "search_symbols"
-    query: str
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class ListImportsOperation(WireModel):
-    action: Literal["list_imports"] = "list_imports"
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class ListExportsOperation(WireModel):
-    action: Literal["list_exports"] = "list_exports"
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class ReferencesOperation(WireModel):
-    action: Literal["references"] = "references"
-    address: str
-    direction: Literal["to", "from"] = "to"
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class CallGraphOperation(SelectorOperation):
-    action: Literal["call_graph"] = "call_graph"
-    depth: GraphDepth = 2
-    max_nodes: GraphNodes = 500
-
-
-class ByteSearchOperation(WireModel):
-    action: Literal["byte_search"] = "byte_search"
-    pattern: HexPattern
-    mask: str | None = None
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class TextSearchOperation(WireModel):
-    action: Literal["text_search"] = "text_search"
-    query: str
-    offset: Offset = 0
-    page_size: PageSize = 100
-
-
-class AnalysisRunOperation(WireModel):
-    action: Literal["analysis_run"] = "analysis_run"
-    timeout_seconds: AnalysisTimeoutSeconds = 900
-
-
-class AnalysisOptionsGetOperation(WireModel):
-    action: Literal["analysis_options_get"] = "analysis_options_get"
-
-
-class AnalysisOptionsSetOperation(WireModel):
-    action: Literal["analysis_options_set"] = "analysis_options_set"
-    values: dict[str, bool | int | float | str]
-
-
-class RenameFunctionOperation(SelectorOperation):
-    action: Literal["edit_rename_function"] = "edit_rename_function"
-    new_name: ProgramName
-
-
-class RenameVariableOperation(WireModel):
-    action: Literal["edit_rename_variable"] = "edit_rename_variable"
-    function_address: str
-    old_name: str
-    new_name: ProgramName
-
-
-class SetCommentOperation(WireModel):
-    action: Literal["edit_set_comment"] = "edit_set_comment"
-    address: str
-    comment: CommentText
-    comment_type: Literal["plate", "pre", "post", "eol", "repeatable"] = "plate"
-
-
-class SetPrototypeOperation(SelectorOperation):
-    action: Literal["edit_set_prototype"] = "edit_set_prototype"
-    prototype: str = Field(min_length=1, max_length=65_536)
-
-
-class PatchBytesOperation(WireModel):
-    action: Literal["edit_patch_bytes"] = "edit_patch_bytes"
-    address: str
-    bytes_hex: str = Field(min_length=2, max_length=131_072)
-
-    @field_validator("bytes_hex")
-    @classmethod
-    def validate_hex_payload(cls, value: str) -> str:
-        if len(value) % 2 or any(char not in "0123456789abcdefABCDEF" for char in value):
-            message = "bytes_hex must be an even-length hexadecimal string"
-            raise ValueError(message)
-        return value
-
-
-class UndoOperation(WireModel):
-    action: Literal["edit_undo"] = "edit_undo"
-    count: Count = 1
-
-
-class RedoOperation(WireModel):
-    action: Literal["edit_redo"] = "edit_redo"
-    count: Count = 1
-
-
-class ProgramSaveOperation(WireModel):
-    action: Literal["program_save"] = "program_save"
-    destination_path: str = Field(min_length=1, max_length=4096)
-    overwrite: bool = False
-
-
-class ProgramSaveResult(WireModel):
-    program_name: str
-    destination_path: str
-    bytes_written: int = Field(ge=0)
-    overwritten: bool = False
-
-
-class ProgramImportBytesOperation(WireModel):
-    action: Literal["program_import_bytes"] = "program_import_bytes"
-    data: str = Field(min_length=1, max_length=100_663_296)
-    program_name: ProgramName
-    analyze: bool = True
-
-
-class ProgramDeleteOperation(WireModel):
-    action: Literal["program_delete"] = "program_delete"
-    program_name: ProgramName
-
-
-class ProgramExportOperation(WireModel):
-    action: Literal["program_export"] = "program_export"
-    destination_path: str = Field(min_length=1, max_length=4096)
-    overwrite: bool = False
-
-
-class ProgramExportResult(WireModel):
-    program_name: str
-    destination_path: str
-    bytes_written: int = Field(ge=0)
-    overwritten: bool = False
-
-
-class ProgramImportOperation(WireModel):
-    action: Literal["program_import"] = "program_import"
-    source_path: str
-    program_name: ProgramName
-    analyze: bool = True
-
-
-type BatchOperation = Annotated[
-    FunctionListOperation
-    | FunctionGetOperation
-    | FunctionDecompileOperation
-    | ListingDisassembleOperation
-    | ListingDataOperation
-    | MemoryBlocksOperation
-    | MemoryReadOperation
-    | SearchStringsOperation
-    | SearchSymbolsOperation
-    | ListImportsOperation
-    | ListExportsOperation
-    | ReferencesOperation
-    | CallGraphOperation
-    | ByteSearchOperation
-    | TextSearchOperation
-    | AnalysisRunOperation
-    | AnalysisOptionsGetOperation
-    | AnalysisOptionsSetOperation
-    | AnalysisListAnalyzersOperation
-    | RenameFunctionOperation
-    | RenameVariableOperation
-    | SetCommentOperation
-    | SetDataTypeOperation
-    | SetPrototypeOperation
-    | PatchBytesOperation
-    | ProgramExportOperation
-    | UndoOperation
-    | RedoOperation,
-    Field(discriminator="action"),
-]
-type WorkerOperation = Annotated[
-    BatchOperation
-    | ProgramImportOperation
-    | ProgramImportBytesOperation
-    | ProgramSaveOperation
-    | ProgramDeleteOperation,
-    Field(discriminator="action"),
-]
-
-READ_ACTIONS = frozenset(
-    {
-        "function_list",
-        "function_get",
-        "function_decompile",
-        "listing_disassemble",
-        "listing_data",
-        "memory_blocks",
-        "memory_read",
-        "search_strings",
-        "search_symbols",
-        "list_imports",
-        "list_exports",
-        "references",
-        "call_graph",
-        "byte_search",
-        "text_search",
-        "analysis_options_get",
-        "analysis_list_analyzers",
-    }
-)
-
-
-class WorkerRequest(WireModel):
-    """Versioned parent-to-worker request envelope."""
-
-    schema_version: Literal[1] = Field(default=1, alias="schema")
+    spilled: bool = False
+    result_path: str | None = None
+    preview: str | None = None
+    total_bytes: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "ok": True,
+            "result": self.result,
+        }
+        if self.spilled:
+            d["spilled"] = True
+            d["result_path"] = self.result_path
+            d["preview"] = self.preview
+            d["total_bytes"] = self.total_bytes
+        return d
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorResponse:
+    """Child-to-parent: failure with a stable error code and message."""
+
+    schema: int
     request_id: str
-    session_id: str
-    project_dir: str
-    project_name: Literal["ryuumonbuchi"] = "ryuumonbuchi"
-    ghidra_install_dir: str
-    max_heap_mb: int
-    max_cpu: int
-    max_response_bytes: int
-    read_only: bool
-    program_name: ProgramName | None = None
-    operations: list[dict[str, Any]] = Field(min_length=1, max_length=32)
+    ok: bool  # always False
+    error: dict[str, Any]  # {"code": str, "message": str, ...}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "ok": False,
+            "error": self.error,
+        }
 
 
-class WorkerError(WireModel):
-    code: str
-    message: str
+def new_request_id() -> str:
+    return uuid.uuid4().hex
 
 
-class WorkerSuccess(WireModel):
-    schema_version: Literal[1] = Field(default=1, alias="schema")
-    request_id: str
-    ok: Literal[True] = True
-    result: Any
+def frame_message(payload: dict[str, Any]) -> bytes:
+    """Encode a message as 8-byte big-endian length + UTF-8 JSON."""
+    data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    if len(data) > _MAX_FRAME_BYTES:
+        msg = f"frame too large: {len(data)} bytes"
+        raise ValueError(msg)
+    return struct.pack(">Q", len(data)) + data
 
 
-class WorkerFailure(WireModel):
-    schema_version: Literal[1] = Field(default=1, alias="schema")
-    request_id: str
-    ok: Literal[False] = False
-    error: WorkerError
+def parse_message(data: bytes) -> dict[str, Any]:
+    """Parse a JSON message payload, validating schema version."""
+    payload = json.loads(data.decode("utf-8"))
+    if not isinstance(payload, dict):
+        msg = "message is not a JSON object"
+        raise ValueError(msg)
+    schema = payload.get("schema")
+    if schema != SCHEMA_VERSION:
+        msg = f"unsupported schema version: {schema}, expected {SCHEMA_VERSION}"
+        raise ValueError(msg)
+    return payload
 
 
-type WorkerResponse = WorkerSuccess | WorkerFailure
+def read_exact(sock: socket, n: int) -> bytes | None:
+    """Read exactly n bytes from a socket; return None on clean EOF."""
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None if not buf else bytes(buf)
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def read_frame(sock: socket) -> dict[str, Any] | None:
+    """Read one complete framed message; return None on clean EOF."""
+    header = read_exact(sock, 8)
+    if header is None:
+        return None
+    if len(header) < 8:
+        msg = "truncated frame header"
+        raise ValueError(msg)
+    (length,) = struct.unpack(">Q", header)
+    if length > _MAX_FRAME_BYTES:
+        msg = f"frame too large: {length} bytes"
+        raise ValueError(msg)
+    if length == 0:
+        return {}
+    body = read_exact(sock, length)
+    if body is None or len(body) < length:
+        msg = "truncated frame body"
+        raise ValueError(msg)
+    return parse_message(body)
+
+
+async def async_read_exact(loop: asyncio.AbstractEventLoop, sock: socket, n: int) -> bytes | None:
+    """Async read exactly n bytes from a socket using the event loop."""
+    import asyncio as _asyncio
+    buf = bytearray()
+    while len(buf) < n:
+        remaining = n - len(buf)
+        chunk = await _asyncio.wait_for(loop.sock_recv(sock, remaining), timeout=300)
+        if not chunk:
+            return None if not buf else bytes(buf)
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+async def async_read_frame(loop: asyncio.AbstractEventLoop, sock: socket) -> dict[str, Any] | None:
+    """Async read one complete framed message."""
+    header = await async_read_exact(loop, sock, 8)
+    if header is None:
+        return None
+    if len(header) < 8:
+        msg = "truncated frame header"
+        raise ValueError(msg)
+    (length,) = struct.unpack(">Q", header)
+    if length > _MAX_FRAME_BYTES:
+        msg = f"frame too large: {length} bytes"
+        raise ValueError(msg)
+    if length == 0:
+        return {}
+    body = await async_read_exact(loop, sock, length)
+    if body is None or len(body) < length:
+        msg = "truncated frame body"
+        raise ValueError(msg)
+    return parse_message(body)
+
+
+async def async_send_frame(loop: asyncio.AbstractEventLoop, sock: socket, payload: dict[str, Any]) -> None:
+    """Async send one complete framed message."""
+    import asyncio as _asyncio
+    data = frame_message(payload)
+    await _asyncio.wait_for(loop.sock_sendall(sock, data), timeout=60)

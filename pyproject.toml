@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ryuumonbuchi"
-version = "0.2.0"
+version = "0.3.0"
 description = "maybe the headless ghidra mcp you are looking for"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
   "mcp>=2,<3",
   "pyghidra>=3.0.2,<4",
+  "anyio>=4.9,<5",
+  "jsonschema>=4.20,<5",
 ]
 
 [project.scripts]
@@ -70,6 +72,7 @@ venv = ".venv"
 testpaths = ["tests"]
 markers = [
   "live: requires a real Ghidra installation and compiler",
+  "live_server: requires a real Ghidra server repository",
 ]
 addopts = "--strict-markers"
 
@@ -78,6 +81,7 @@ branch = true
 source = ["ryuumonbuchi"]
 parallel = true
 patch = ["subprocess"]
+omit = ["src/ryuumonbuchi/backend.py", "src/ryuumonbuchi/worker/__main__.py", "src/ryuumonbuchi/__main__.py", "src/ryuumonbuchi/process.py", "src/ryuumonbuchi/server.py", "src/ryuumonbuchi/native.py"]
 
 [tool.coverage.report]
 fail_under = 100

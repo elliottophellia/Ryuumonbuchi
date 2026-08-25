@@ -1,102 +1,103 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 Ryuumonbuchi contributors
-# pyright: reportPrivateUsage=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportIndexIssue=false
+
+"""Process: PersistentWorker generation, lock, status, shutdown, error taxonomy."""
+
 from __future__ import annotations
 
-import asyncio
-import json
+# pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownVariableType=false
+
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from ryuumonbuchi.config import AppConfig
-from ryuumonbuchi.process import WorkerFailedError, WorkerRunner
-from ryuumonbuchi.session import SessionWorkspace
+from ryuumonbuchi.process import (
+    PersistentWorker,
+    WorkerCancelledError,
+    WorkerFailedError,
+    WorkerOperationError,
+    WorkerRunError,
+    WorkerTimeoutError,
+)
+from ryuumonbuchi.session import RuntimeWorkspace
 
 
-class FakeProcess:
-    pid = 1234
-    returncode = 0
-
-    def poll(self) -> int:
-        return self.returncode
-
-    def wait(self, timeout: float | None = None) -> int:
-        return self.returncode
-
-
-@pytest.mark.parametrize("read_only", [True, False])
-def test_worker_runner_writes_request_and_cleans_success(
-    app_config: object, workspace: SessionWorkspace, monkeypatch: object, read_only: bool
-) -> None:
-    runner = WorkerRunner(cast(AppConfig, app_config), workspace)
-    process = FakeProcess()
-    response_holder: dict[str, Path] = {}
-
-    def spawn(request_path: Path, response_path: Path, log_path: Path) -> FakeProcess:
-        payload = json.loads(request_path.read_text(encoding="utf-8"))
-        assert payload["schema"] == 1
-        assert payload["project_name"] == "ryuumonbuchi"
-        assert payload["read_only"] is read_only
-        response_path.write_text(
-            json.dumps(
-                {
-                    "schema": 1,
-                    "request_id": payload["request_id"],
-                    "ok": True,
-                    "result": {"ok": 1},
-                }
-            ),
-            encoding="utf-8",
-        )
-        response_holder["run"] = request_path.parent
-        return process
-
-    monkeypatch.setattr(runner, "_spawn", spawn)  # type: ignore[union-attr]
-    result = asyncio.run(
-        runner.run([{"action": "function_list"}], read_only=read_only, program_name="hello")
+@pytest.fixture
+def config(fake_ghidra: Path) -> AppConfig:
+    return AppConfig(
+        ghidra_install_dir=fake_ghidra,
+        max_heap_mb=256,
+        max_cpu=1,
+        operation_timeout_seconds=30,
     )
-    assert result.result == {"ok": 1}
-    assert runner.active_worker_pid is None
-    assert runner.last_worker_pid == 1234
-    assert not response_holder["run"].exists()
 
 
-def test_worker_runner_spawn_builds_sanitized_environment(
-    app_config: AppConfig, workspace: SessionWorkspace, tmp_path: Path, monkeypatch
-) -> None:
-    runner = WorkerRunner(app_config, workspace)
-    request = tmp_path / "request.json"
-    response = tmp_path / "response.json"
-    log = tmp_path / "worker.log"
-    captured: dict[str, object] = {}
-
-    class Process:
-        pid = 12
-
-    def fake_popen(args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        return Process()
-
-    monkeypatch.setattr("ryuumonbuchi.process.subprocess.Popen", fake_popen)
-    process = runner._spawn(request, response, log)
-    assert process.pid == 12
-    assert captured["args"][1:3] == ["-m", "ryuumonbuchi.worker"]
-    assert captured["kwargs"]["env"]["GHIDRA_INSTALL_DIR"] == str(app_config.ghidra_install_dir)
+@pytest.fixture
+def worker(workspace: RuntimeWorkspace, config: AppConfig) -> PersistentWorker:
+    return PersistentWorker(config=config, workspace=workspace)
 
 
-def test_worker_runner_rejects_malformed_response(
-    app_config: object, workspace: SessionWorkspace, monkeypatch: object
-) -> None:
-    runner = WorkerRunner(cast(AppConfig, app_config), workspace)
+def test_worker_generation_is_string(worker: PersistentWorker) -> None:
+    gen = worker.generation
+    assert isinstance(gen, str)
+    assert len(gen) == 36 or len(gen) == 32  # UUID format
 
-    def spawn(request_path: Path, response_path: Path, log_path: Path) -> FakeProcess:
-        response_path.write_text("{}", encoding="utf-8")
-        return FakeProcess()
 
-    monkeypatch.setattr(runner, "_spawn", spawn)  # type: ignore[union-attr]
-    with pytest.raises(WorkerFailedError, match="schema mismatch"):
-        asyncio.run(runner.run([{"action": "function_list"}], read_only=True, program_name="hello"))
-    assert runner.active_worker_pid is None
+def test_worker_generation_changes_on_reset(worker: PersistentWorker) -> None:
+    gen1 = worker.generation
+    import asyncio
+
+    asyncio.run(worker._handle_failure("test"))  # noqa: SLF001
+    gen2 = worker.generation
+    assert gen1 != gen2
+
+
+def test_worker_not_started(worker: PersistentWorker) -> None:
+    assert not worker.is_started
+    assert not worker.jvm_started
+    assert worker.child_pid() is None
+
+
+def test_worker_status_before_start(worker: PersistentWorker) -> None:
+    import asyncio
+
+    status = asyncio.run(worker.status())
+    assert status["jvm_started"] is False
+    assert status["child_pid"] is None
+    assert status["session_count"] == 0
+    assert status["task_count"] == 0
+
+
+def test_worker_shutdown_before_start(worker: PersistentWorker) -> None:
+    import asyncio
+
+    asyncio.run(worker.shutdown())
+    assert not worker.is_started
+
+
+def test_worker_error_taxonomy_inheritance() -> None:
+    assert issubclass(WorkerTimeoutError, WorkerRunError)
+    assert issubclass(WorkerCancelledError, WorkerRunError)
+    assert issubclass(WorkerFailedError, WorkerRunError)
+    assert issubclass(WorkerOperationError, WorkerRunError)
+
+
+def test_worker_failed_error_has_log_tail() -> None:
+    err = WorkerFailedError("crash", log_tail="log lines")
+    assert err.log_tail == "log lines"
+
+
+def test_worker_operation_error_has_code() -> None:
+    err = WorkerOperationError("ghidra_error", "bad address")
+    assert err.code == "ghidra_error"
+    assert "ghidra_error" in str(err)
+
+
+def test_worker_handle_failure_resets_state(worker: PersistentWorker) -> None:
+    import asyncio
+
+    asyncio.run(worker._handle_failure("test"))  # noqa: SLF001
+    assert not worker.is_started
+    assert not worker.jvm_started
+    assert worker.child_pid() is None
