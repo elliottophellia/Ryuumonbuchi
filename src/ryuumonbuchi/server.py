@@ -11,26 +11,26 @@ import asyncio
 import base64
 import binascii
 import json
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
 import jsonschema
-from mcp.server.lowlevel.server import Server, NotificationOptions
 from mcp import types as mcp_types
+from mcp.server.lowlevel.server import NotificationOptions, Server
 
 from . import __version__
-from .catalog import TOOL_SPECS, TOOL_BY_NAME
+from .catalog import TOOL_BY_NAME, TOOL_SPECS
 from .config import AppConfig, current_python_version, validate_ghidra_installation
-from .native import NativeRunner, NativeRunError, NativeSpawnError, NativeTimeoutError
+from .native import NativeRunError, NativeRunner, NativeSpawnError, NativeTimeoutError
 from .process import (
     PersistentWorker,
-    WorkerTimeoutError,
     WorkerCancelledError,
     WorkerFailedError,
     WorkerOperationError,
+    WorkerTimeoutError,
 )
 from .session import RuntimeWorkspace
 
@@ -309,6 +309,25 @@ async def _handle_batch(
     session_id = arguments.get("session_id", "")
     operations = arguments.get("operations", [])
 
+    # Validate each batch item against its referenced ToolSpec before dispatch.
+    for op in operations:
+        tool = op.get("tool", "")
+        item_spec = TOOL_BY_NAME.get(tool)
+        if item_spec is None:
+            return _error_result("invalid_params", f"unknown tool in batch: {tool}")
+        if not item_spec.batch_allowed:
+            return _error_result("invalid_params", f"tool {tool} is not batchable")
+        item_args = dict(op.get("arguments", {}))
+        if "session_id" not in item_args:
+            item_args["session_id"] = session_id
+        try:
+            jsonschema.validate(
+                item_args, item_spec.input_schema, cls=jsonschema.Draft202012Validator
+            )
+        except jsonschema.ValidationError as exc:
+            return _error_result(
+                "invalid_params", f"argument validation failed for {tool}: {exc.message}"
+            )
     try:
         call = await state.worker.batch(session_id, operations)
         return _success_result("operation.batch", call.result)

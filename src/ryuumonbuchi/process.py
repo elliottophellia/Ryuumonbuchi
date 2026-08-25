@@ -283,7 +283,7 @@ class PersistentWorker:
                         await asyncio.wait_for(
                             loop.sock_recv(self._parent_sock, 8), timeout=5
                         )
-                    except (OSError, asyncio.TimeoutError):
+                    except (TimeoutError, OSError):
                         pass
             except (OSError, WorkerRunError):
                 pass
@@ -313,7 +313,7 @@ class PersistentWorker:
                 response = await asyncio.wait_for(
                     async_read_frame(loop, self._parent_sock), timeout=deadline
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 await self._handle_failure("worker_timeout")
                 msg = f"worker timed out after {deadline}s"
                 raise WorkerTimeoutError(msg) from exc

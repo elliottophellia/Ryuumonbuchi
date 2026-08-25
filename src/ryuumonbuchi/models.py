@@ -6,12 +6,13 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
+
 import json
 import struct
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     import asyncio
     from socket import socket
