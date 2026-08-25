@@ -248,9 +248,17 @@ class GhidraBackend:
             if language or compiler or loader:
                 raise
             suffix = Path(filename or "session.bin").suffix or ".bin"
+            fallback_dir = (
+                Path(self._config.workspace_root) / "runs"
+                if self._config.workspace_root
+                else None
+            )
+            if fallback_dir is not None:
+                fallback_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
                 prefix="ghidra_headless_mcp-",
                 suffix=suffix,
+                dir=str(fallback_dir) if fallback_dir is not None else None,
                 delete=False,
             ) as tmp:
                 tmp.write(raw_bytes)
@@ -2400,20 +2408,25 @@ class GhidraBackend:
     def session_export_project(self, session_id: str, *, destination: str) -> dict[str, Any]:
         if not destination:
             raise GhidraBackendError("destination is required")
+        if not self._config.allow_export:
+            raise GhidraBackendError(
+                "project.export is disabled; set RYUUMONBUCHI_ALLOW_EXPORT=1 to enable"
+            )
         record = self._get_record(session_id)
         if record.active_transaction_id is not None:
             raise GhidraBackendError("commit or revert the active transaction before export")
         self.session_save(session_id)
         dest_root = Path(destination).resolve()
-        dest_root.mkdir(parents=True, exist_ok=True)
+        self._reject_unsafe_export_target(dest_root)
+        if dest_root.exists():
+            raise GhidraBackendError(f"destination already exists: {dest_root}")
+        dest_root.mkdir(parents=True, exist_ok=False)
         copied: list[str] = []
         for source in self._project_artifacts(record):
             if not source.exists():
                 continue
             target = dest_root / source.name
             if source.is_dir():
-                if target.exists():
-                    shutil.rmtree(target)
                 shutil.copytree(source, target)
             else:
                 shutil.copy2(source, target)
@@ -2424,7 +2437,6 @@ class GhidraBackend:
             "count": len(copied),
             "items": copied,
         }
-
     def session_export_binary(
         self,
         session_id: str,
@@ -2434,34 +2446,47 @@ class GhidraBackend:
     ) -> dict[str, Any]:
         if not path:
             raise GhidraBackendError("path is required")
+        if not self._config.allow_export:
+            raise GhidraBackendError(
+                "program.export_binary is disabled; set RYUUMONBUCHI_ALLOW_EXPORT=1 to enable"
+            )
         record = self._get_record(session_id)
         if record.active_transaction_id is not None:
             raise GhidraBackendError("commit or revert the active transaction before export")
         self._ensure_started()
+        if format not in {"original_file", "raw"}:
+            raise GhidraBackendError("format must be 'original_file' or 'raw'")
         from ghidra.app.util.exporter import BinaryExporter, OriginalFileExporter
         from java.io import File
         from java.util import ArrayList
 
         output_path = Path(path).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if format not in {"original_file", "raw"}:
-            raise GhidraBackendError("format must be 'original_file' or 'raw'")
+        self._reject_unsafe_export_target(output_path)
+        if output_path.exists() and not output_path.is_file():
+            raise GhidraBackendError(f"destination is not a regular file: {output_path}")
+        tmp_name, final_name = self._export_stage_file(output_path)
         exporter = OriginalFileExporter() if format == "original_file" else BinaryExporter()
         exporter.setOptions(ArrayList())
         try:
             ok = exporter.export(
-                File(str(output_path)),
+                File(tmp_name),
                 record.program,
                 None,
                 self._pyghidra.task_monitor(DEFAULT_ANALYSIS_TIMEOUT),
             )
         except Exception as exc:
+            with suppress(OSError):
+                os.unlink(tmp_name)
             raise GhidraBackendError(f"failed to export binary: {exc}") from exc
         if not ok:
+            with suppress(OSError):
+                os.unlink(tmp_name)
             raise GhidraBackendError("failed to export binary")
+        os.chmod(tmp_name, 0o600)
+        self._export_publish(tmp_name, output_path, overwrite=True)
         return {
             "session_id": session_id,
-            "path": str(output_path),
+            "path": final_name,
             "format": format,
             "size": output_path.stat().st_size,
         }
@@ -2476,30 +2501,37 @@ class GhidraBackend:
         """Export the program as a lossless Ghidra packed file (GZF)."""
         if not destination_path:
             raise GhidraBackendError("destination_path is required")
+        if not self._config.allow_export:
+            raise GhidraBackendError(
+                "program.export_packed is disabled; set RYUUMONBUCHI_ALLOW_EXPORT=1 to enable"
+            )
         record = self._get_record(session_id)
+        self._ensure_started()
+        from java.io import File
+
         dest = Path(destination_path).expanduser().resolve()
+        self._reject_unsafe_export_target(dest)
         if dest.exists() and not overwrite:
             raise GhidraBackendError(f"destination already exists: {dest}")
-        # Write to a sibling temp file, then atomically replace
-        tmp = dest.with_suffix(dest.suffix + ".tmp")
-        if tmp.exists():
-            tmp.unlink()
+        if dest.exists() and dest.is_dir():
+            raise GhidraBackendError(f"destination is a directory: {dest}")
+        tmp_name, final_name = self._export_stage_file(dest)
         try:
             record.program.saveToPackedFile(
-                File(str(tmp)),
+                File(tmp_name),
                 self._pyghidra.task_monitor(DEFAULT_ANALYSIS_TIMEOUT),
             )
-            os.chmod(str(tmp), 0o600)
-            if dest.exists() and overwrite:
-                dest.unlink()
-            os.replace(str(tmp), str(dest))
+            os.chmod(tmp_name, 0o600)
+            self._export_publish(tmp_name, dest, overwrite=overwrite)
+        except GhidraBackendError:
+            raise
         except Exception as exc:
             with suppress(OSError):
-                tmp.unlink()
+                os.unlink(tmp_name)
             raise GhidraBackendError(f"failed to export packed file: {exc}") from exc
         return {
             "session_id": session_id,
-            "destination_path": str(dest),
+            "destination_path": final_name,
             "size": dest.stat().st_size,
         }
 
@@ -2530,6 +2562,10 @@ class GhidraBackend:
             "path": path,
             "deleted": True,
         }
+
+
+
+
 
     def bookmark_add(
         self,
@@ -5693,7 +5729,12 @@ class GhidraBackend:
                 project_name or self._default_project_name(seed_name),
                 False,
             )
-        temp_root = tempfile.mkdtemp(prefix="ghidra_headless_mcp-")
+        if self._config.workspace_root:
+            base = Path(self._config.workspace_root) / "projects"
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temp_root = tempfile.mkdtemp(prefix="ghidra_headless_mcp-", dir=str(base))
+        else:
+            temp_root = tempfile.mkdtemp(prefix="ghidra_headless_mcp-")
         return temp_root, self._default_project_name(seed_name), True
 
     def _default_project_name(self, seed_name: str) -> str:
