@@ -2222,19 +2222,69 @@ class GhidraBackend:
     ) -> dict[str, Any]:
         if count <= 0:
             raise GhidraBackendError("count must be > 0")
-        last_error: Exception | None = None
-        for mnemonic in ("NOP", "nop", "hint #0"):
-            try:
-                return self.patch_assemble(
-                    session_id,
-                    address=address,
-                    assembly="\n".join(mnemonic for _ in range(count)),
-                )
-            except Exception as exc:
-                last_error = exc
-        if last_error is None:  # pragma: no cover - defensive
-            raise GhidraBackendError("failed to assemble NOP")
-        raise last_error
+        addr = self._coerce_address(session_id, address, "address")
+        program = self._get_program(session_id)
+        listing = program.getListing()
+
+        # Resolve the byte span covered by `count` instructions starting at
+        # `address`, so we NOP exactly that many bytes regardless of ISA width.
+        span_start = addr
+        span_end = addr
+        cursor = addr
+        remaining = count
+        while remaining > 0:
+            instr = listing.getInstructionAt(cursor)
+            if instr is None:
+                # Fall back to the current single byte cell if undefined here.
+                span_end = cursor
+                break
+            span_end = instr.getMaxAddress()
+            remaining -= 1
+            cursor = span_end.add(1)
+        span_length = int(span_end.subtract(span_start)) + 1
+
+        # Raw-byte route: the SLEIGH assembler rejects the NOP mnemonic on some
+        # language specs (notably x86), and a failed assemble attempt can leave
+        # memory half-written via a non-rolling-back transaction. Clearing the
+        # conflicting code units then writing the canonical NOP byte is
+        # ISA-portable for the common cases (x86 0x90, generic 0x00 fill) and
+        # does not depend on the assembler. Use the language's NOP fill byte.
+        lang_id = str(program.getLanguageID())
+        if lang_id.startswith("x86"):
+            nop_byte = 0x90
+        elif lang_id.startswith("ARM") or lang_id.startswith("AARCH"):
+            # ARM NOP is not a single repeating byte; raw fill would be invalid.
+            # Fall back to the assembler for these ISAs where it is required.
+            nop_byte = None
+        else:
+            nop_byte = 0x00
+
+        def mutate_raw() -> dict[str, Any]:
+            listing.clearCodeUnits(span_start, span_end, True)
+            if nop_byte is None:
+                # Assembler-required ISA: emit via the SLEIGH assembler after clear.
+                from ghidra.app.plugin.assembler import Assemblers
+
+                assembler = Assemblers.getAssembler(program)
+                assembler.assemble(span_start, "\n".join("nop" for _ in range(count)))
+                return {"method": "assembler", "bytes": span_length}
+            from jpype.types import JArray, JByte
+
+            payload = bytes([nop_byte] * span_length)
+            program.getMemory().setBytes(span_start, JArray(JByte)(payload))
+            return {"method": "raw_bytes", "nop_byte": nop_byte, "bytes_written": span_length}
+
+        result = self._with_write(
+            session_id, f"NOP at {self._addr_str(span_start)}", mutate_raw
+        )
+        return {
+            "session_id": session_id,
+            "address": self._addr_str(span_start),
+            "end": self._addr_str(span_end),
+            "bytes_nopped": span_length,
+            "count": count,
+            "detail": result if isinstance(result, dict) else {"detail": result},
+        }
 
     def patch_branch_invert(self, session_id: str, *, address: int | str) -> dict[str, Any]:
         addr = self._coerce_address(session_id, address, "address")
