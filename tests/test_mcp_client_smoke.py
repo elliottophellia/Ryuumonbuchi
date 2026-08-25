@@ -8,6 +8,8 @@ in-memory MCP streams, without spawning a JVM (``health.ping`` is JVM-lazy and
 ``mcp.response_format`` is server-native).
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 from pathlib import Path

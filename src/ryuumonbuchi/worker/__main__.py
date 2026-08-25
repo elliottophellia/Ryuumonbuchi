@@ -106,7 +106,9 @@ def _spill_result(result: Any, workspace_root: str) -> dict[str, Any]:
 
 
 # Configured response byte cap, set once from the bootstrap config in main().
-_MAX_RESPONSE_BYTES_CONFIGURED = _MAX_RESPONSE_BYTES
+_max_response_bytes_configured = _MAX_RESPONSE_BYTES
+
+
 
 
 def _send_response(payload: dict[str, Any]) -> None:
@@ -117,7 +119,7 @@ def _send_response(payload: dict[str, Any]) -> None:
 
 def _send_success(request_id: str, result: Any, *, workspace_root: str = "") -> None:
     jsonable = _to_jsonable(result)
-    if workspace_root and _should_spill(jsonable, _MAX_RESPONSE_BYTES_CONFIGURED):
+    if workspace_root and _should_spill(jsonable, _max_response_bytes_configured):
         spill = _spill_result(jsonable, workspace_root)
         response: dict[str, Any] = {
             "schema": SCHEMA_VERSION,
@@ -284,8 +286,8 @@ def main() -> int:
 
     backend = GhidraBackend(pyghidra, config)
     workspace_root = raw_config.get("workspace_root", "")
-    global _MAX_RESPONSE_BYTES_CONFIGURED
-    _MAX_RESPONSE_BYTES_CONFIGURED = config.max_response_bytes
+    global _max_response_bytes_configured
+    _max_response_bytes_configured = config.max_response_bytes
 
     # Frame loop
     while True:

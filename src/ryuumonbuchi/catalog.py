@@ -1595,8 +1595,6 @@ def _apply_schema_bounds(specs: list[ToolSpec]) -> list[ToolSpec]:
     for spec in specs:
         props: dict[str, Any] = spec.input_schema.get("properties", {})
         for prop_name, prop_schema in props.items():
-            if not isinstance(prop_schema, dict):
-                continue
             if prop_schema.get("type") == "integer" and prop_name in _INT_BOUNDS:
                 for key, value in _INT_BOUNDS[prop_name].items():
                     prop_schema.setdefault(key, value)
@@ -1630,6 +1628,10 @@ def assert_catalog_consistency() -> None:
     # Valid Draft 2020-12 schemas.
     Draft202012Validator = jsonschema.Draft202012Validator
     special = {"health.ping", "mcp.response_format", "headless.run", "operation.batch"}
+    import inspect
+
+    from .backend import GhidraBackend
+
     for spec in TOOL_SPECS:
         Draft202012Validator.check_schema(spec.input_schema)
         for prop_name, prop_schema in spec.input_schema.get("properties", {}).items():
@@ -1639,11 +1641,10 @@ def assert_catalog_consistency() -> None:
             assert (
                 spec.backend_method is None
             ), f"{spec.name}: special tool must have no backend method"
-        elif spec.backend_method is not None:
-            import inspect
-
-            from .backend import GhidraBackend
-
+        else:
+            assert (
+                spec.backend_method is not None
+            ), f"{spec.name}: non-special tool missing backend method"
             method = getattr(GhidraBackend, spec.backend_method, None)
             assert method is not None, f"{spec.name}: missing backend method {spec.backend_method}"
             signature = inspect.signature(method)

@@ -11,6 +11,8 @@ byte-import bounds, and worker crash recovery.
 Uses tests/print_flag plus the tests/print_flag_ghidra project fixtures.
 """
 
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportIndexIssue=false, reportAttributeAccessIssue=false
+
 from __future__ import annotations
 
 import base64
@@ -42,23 +44,15 @@ def _config(live_ghidra: Path, **overrides: object) -> AppConfig:
 
 
 async def _call(client: ClientSession, tool: str, args: dict[str, object]) -> object:
-    result = await client.call_tool(tool, args)
-    assert not result.is_error, f"{tool}: {result.content}"
-    # Structured JSON payload is the compressed text of the second block.
     import json
 
+    result = await client.call_tool(tool, args)
+    assert not result.is_error, f"{tool}: {result.content}"
     for block in result.content:
-        if getattr(block, "type", None) == "text" and getattr(block, "text", "").startswith("{"):
-            return json.loads(block.text)
+        text = getattr(block, "text", "")
+        if getattr(block, "type", None) == "text" and text.startswith("{"):
+            return json.loads(text)
     return None
-
-
-def _text(result: object) -> str:
-    return "\n".join(
-        getattr(block, "text", "")
-        for block in getattr(result, "content", [])
-        if getattr(block, "type", None) == "text"
-    )
 
 
 def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Path) -> None:

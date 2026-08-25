@@ -10,6 +10,8 @@ It catches descriptor and bootstrap-envelope drift against the versioned model
 contract.
 """
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import asyncio
