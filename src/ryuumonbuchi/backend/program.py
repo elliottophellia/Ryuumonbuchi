@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .backend_state import DEFAULT_ANALYSIS_TIMEOUT, GhidraBackendError, SessionRecord
+from .state import DEFAULT_ANALYSIS_TIMEOUT, GhidraBackendError, SessionRecord
 
 
 class _ProgramMixin:

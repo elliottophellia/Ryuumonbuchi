@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from typing import Any
 
-from .backend_state import GhidraBackendError
+from .state import GhidraBackendError
 
 
 class _SearchMixin:

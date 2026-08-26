@@ -8,7 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from .backend_state import GhidraBackendError
+from .state import GhidraBackendError
 
 
 class _ResolverMixin:

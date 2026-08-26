@@ -18,19 +18,19 @@ Instructions for contributors who edit this repository. These are durable conven
 | `src/ryuumonbuchi/process.py` | Parent worker lifecycle |
 | `src/ryuumonbuchi/models.py` | Protocol-v2 wire frames |
 | `src/ryuumonbuchi/worker/__main__.py` | Child dispatch and result spilling |
-| `src/ryuumonbuchi/backend.py` | `GhidraBackend` façade: re-exports and mixin composition only |
-| `src/ryuumonbuchi/backend_state.py` | State: config, error type, session/task records |
-| `src/ryuumonbuchi/backend_core.py` | `_BackendCore`: startup, ping, shutdown, shared helpers |
-| `src/ryuumonbuchi/backend_records.py` | `_RecordMixin`: record/dict conversion helpers |
-| `src/ryuumonbuchi/backend_resolvers.py` | `_ResolverMixin`: symbol/type/category resolution helpers |
-| `src/ryuumonbuchi/backend_program.py` | `_ProgramMixin`: session/project/lifecycle/export operations |
-| `src/ryuumonbuchi/backend_analysis.py` | `_AnalysisMixin`: analysis, decompiler, graph, task operations |
-| `src/ryuumonbuchi/backend_listing.py` | `_ListingMixin`: memory, disassembly, patch, listing operations |
-| `src/ryuumonbuchi/backend_search.py` | `_SearchMixin`: string/byte/constant/instruction search |
-| `src/ryuumonbuchi/backend_symbols.py` | `_SymbolMixin`: symbols, annotations, bookmarks, namespaces, tags |
-| `src/ryuumonbuchi/backend_references.py` | `_ReferenceMixin`: imports/exports, xrefs, external metadata, equates |
-| `src/ryuumonbuchi/backend_functions.py` | `_FunctionMixin`: function/parameter/variable operations |
-| `src/ryuumonbuchi/backend_types.py` | `_TypeMixin`: type/struct/enum/layout operations |
+| `src/ryuumonbuchi/backend/__init__.py` | `GhidraBackend` façade: re-exports and mixin composition only |
+| `src/ryuumonbuchi/backend/state.py` | State: config, error type, session/task records |
+| `src/ryuumonbuchi/backend/core.py` | `_BackendCore`: startup, ping, shutdown, shared helpers |
+| `src/ryuumonbuchi/backend/records.py` | `_RecordMixin`: record/dict conversion helpers |
+| `src/ryuumonbuchi/backend/resolvers.py` | `_ResolverMixin`: symbol/type/category resolution helpers |
+| `src/ryuumonbuchi/backend/program.py` | `_ProgramMixin`: session/project/lifecycle/export operations |
+| `src/ryuumonbuchi/backend/analysis.py` | `_AnalysisMixin`: analysis, decompiler, graph, task operations |
+| `src/ryuumonbuchi/backend/listing.py` | `_ListingMixin`: memory, disassembly, patch, listing operations |
+| `src/ryuumonbuchi/backend/search.py` | `_SearchMixin`: string/byte/constant/instruction search |
+| `src/ryuumonbuchi/backend/symbols.py` | `_SymbolMixin`: symbols, annotations, bookmarks, namespaces, tags |
+| `src/ryuumonbuchi/backend/references.py` | `_ReferenceMixin`: imports/exports, xrefs, external metadata, equates |
+| `src/ryuumonbuchi/backend/functions.py` | `_FunctionMixin`: function/parameter/variable operations |
+| `src/ryuumonbuchi/backend/types.py` | `_TypeMixin`: type/struct/enum/layout operations |
 | `src/ryuumonbuchi/native.py` | Exact `analyzeHeadless` execution |
 | `src/ryuumonbuchi/session.py` | Private workspace management |
 | `tests/` | Catalog counts, schema invariants, CLI/config, lifecycle, live workflow |

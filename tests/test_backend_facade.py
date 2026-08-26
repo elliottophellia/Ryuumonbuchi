@@ -6,23 +6,23 @@ import inspect
 
 import pytest
 
+import ryuumonbuchi.backend.state as backend_state
 from ryuumonbuchi import backend as facade
-from ryuumonbuchi import backend_state
 from ryuumonbuchi.backend import GhidraBackend
 from ryuumonbuchi.catalog import TOOL_SPECS
 
 EXPECTED_MRO: list[tuple[str, str]] = [
-    ("ryuumonbuchi.backend_core", "_BackendCore"),
-    ("ryuumonbuchi.backend_records", "_RecordMixin"),
-    ("ryuumonbuchi.backend_resolvers", "_ResolverMixin"),
-    ("ryuumonbuchi.backend_program", "_ProgramMixin"),
-    ("ryuumonbuchi.backend_analysis", "_AnalysisMixin"),
-    ("ryuumonbuchi.backend_listing", "_ListingMixin"),
-    ("ryuumonbuchi.backend_search", "_SearchMixin"),
-    ("ryuumonbuchi.backend_symbols", "_SymbolMixin"),
-    ("ryuumonbuchi.backend_references", "_ReferenceMixin"),
-    ("ryuumonbuchi.backend_functions", "_FunctionMixin"),
-    ("ryuumonbuchi.backend_types", "_TypeMixin"),
+    ("ryuumonbuchi.backend.core", "_BackendCore"),
+    ("ryuumonbuchi.backend.records", "_RecordMixin"),
+    ("ryuumonbuchi.backend.resolvers", "_ResolverMixin"),
+    ("ryuumonbuchi.backend.program", "_ProgramMixin"),
+    ("ryuumonbuchi.backend.analysis", "_AnalysisMixin"),
+    ("ryuumonbuchi.backend.listing", "_ListingMixin"),
+    ("ryuumonbuchi.backend.search", "_SearchMixin"),
+    ("ryuumonbuchi.backend.symbols", "_SymbolMixin"),
+    ("ryuumonbuchi.backend.references", "_ReferenceMixin"),
+    ("ryuumonbuchi.backend.functions", "_FunctionMixin"),
+    ("ryuumonbuchi.backend.types", "_TypeMixin"),
 ]
 
 

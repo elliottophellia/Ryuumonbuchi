@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false
-from .backend_analysis import _AnalysisMixin
-from .backend_core import _BackendCore
-from .backend_functions import _FunctionMixin
-from .backend_listing import _ListingMixin
-from .backend_program import _ProgramMixin
-from .backend_records import _RecordMixin
-from .backend_references import _ReferenceMixin
-from .backend_resolvers import _ResolverMixin
-from .backend_search import _SearchMixin
-from .backend_state import (
+from .analysis import _AnalysisMixin
+from .core import _BackendCore
+from .functions import _FunctionMixin
+from .listing import _ListingMixin
+from .program import _ProgramMixin
+from .records import _RecordMixin
+from .references import _ReferenceMixin
+from .resolvers import _ResolverMixin
+from .search import _SearchMixin
+from .state import (
     DEFAULT_ANALYSIS_TIMEOUT,
     MAX_MEMORY_READ_BYTES,
     BackendConfig,
@@ -20,8 +20,8 @@ from .backend_state import (
     SessionRecord,
     TaskRecord,
 )
-from .backend_symbols import _SymbolMixin
-from .backend_types import _TypeMixin
+from .symbols import _SymbolMixin
+from .types import _TypeMixin
 
 __all__ = [
     "DEFAULT_ANALYSIS_TIMEOUT",
