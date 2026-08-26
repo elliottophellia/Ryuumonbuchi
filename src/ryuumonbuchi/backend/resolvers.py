@@ -21,8 +21,42 @@ class _ResolverMixin:
         if function is None:
             function = manager.getFunctionContaining(addr)
         if function is None:
-            raise GhidraBackendError(f"no function found at {self._addr_str(addr)}")
+            normalized = self._addr_str(addr)
+            hint = self._function_neighbor_hint(manager, addr)
+            raise GhidraBackendError(f"no function found at {normalized}; {hint}")
         return function
+    def _function_neighbor_hint(self, manager: Any, address: Any) -> str:
+        def nearest(forward: bool) -> Any | None:
+            functions = manager.getFunctions(address, forward)
+            function = functions.next() if functions.hasNext() else None
+            if function is None or function.isExternal():
+                return None
+            return function
+
+        previous = nearest(False)
+        following = nearest(True)
+
+        if previous is None:
+            previous_hint = "previous function: none"
+        else:
+            entry = previous.getEntryPoint()
+            distance = address.subtract(entry)
+            previous_hint = (
+                f"previous function: {previous.getName()}@{self._addr_str(entry)} "
+                f"({distance:#x} bytes before)"
+            )
+
+        if following is None:
+            next_hint = "next function: none"
+        else:
+            entry = following.getEntryPoint()
+            distance = entry.subtract(address)
+            next_hint = (
+                f"next function: {following.getName()}@{self._addr_str(entry)} "
+                f"({distance:#x} bytes after)"
+            )
+
+        return f"{previous_hint}; {next_hint}"
 
     def _resolve_symbol(self, session_id: str, address: int | str, *, name: str | None) -> Any:
         addr = self._coerce_address(session_id, address, "address")

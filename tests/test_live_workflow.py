@@ -90,6 +90,22 @@ def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Pat
                         {"session_id": session_id, "function_start": main_entry},
                     )
                     assert isinstance(decompiled, dict)
+                    unresolved = await client.call_tool(
+                        "decomp.function",
+                        {"session_id": session_id, "function_start": 1057200},
+                    )
+                    assert unresolved.is_error
+                    unresolved_text = "\n".join(
+                        getattr(block, "text", "") for block in unresolved.content
+                    )
+                    assert "no function found at 001021b0" in unresolved_text
+                    assert (
+                        "previous function: _fini@00101a04 (0x7ac bytes before)"
+                        in unresolved_text
+                    )
+                    assert (
+                        "next function: putchar@00105000 (0x2e50 bytes after)" in unresolved_text
+                    )
 
                     disasm = await _call(
                         client,
