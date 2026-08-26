@@ -83,13 +83,39 @@ def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Pat
                     main_entry = next(
                         f["entry_point"] for f in functions["items"] if f.get("name") == "main"
                     )
+                    show_flag_entry = next(
+                        f["entry_point"] for f in functions["items"] if f.get("name") == "show_flag"
+                    )
 
                     decompiled = await _call(
                         client,
                         "decomp.function",
-                        {"session_id": session_id, "function_start": main_entry},
+                        {"session_id": session_id, "function_start": show_flag_entry},
                     )
                     assert isinstance(decompiled, dict)
+                    assert decompiled["view"] == "raw"
+                    assert decompiled["c_is_complete"] is True
+                    assert decompiled["omitted_synthetic_declaration_count"] == 0
+
+                    compact = await _call(
+                        client,
+                        "decomp.function",
+                        {
+                            "session_id": session_id,
+                            "function_start": show_flag_entry,
+                            "view": "compact",
+                        },
+                    )
+                    assert isinstance(compact, dict)
+                    assert compact["view"] == "compact"
+                    assert compact["c_is_complete"] is False
+                    assert compact["omitted_synthetic_declaration_count"] > 0
+                    assert compact["warning"] == (
+                        "Compact view omits Ghidra-generated local declarations and is not "
+                        "compilable; call decomp.function with view='raw' for complete C."
+                    )
+                    assert len(compact["c"]) < len(decompiled["c"])
+                    assert "putchar" in compact["c"]
                     unresolved = await client.call_tool(
                         "decomp.function",
                         {"session_id": session_id, "function_start": 1057200},
@@ -100,12 +126,9 @@ def test_live_open_analyze_decompile_export_run(tmp_path: Path, live_ghidra: Pat
                     )
                     assert "no function found at 001021b0" in unresolved_text
                     assert (
-                        "previous function: _fini@00101a04 (0x7ac bytes before)"
-                        in unresolved_text
+                        "previous function: _fini@00101a04 (0x7ac bytes before)" in unresolved_text
                     )
-                    assert (
-                        "next function: putchar@00105000 (0x2e50 bytes after)" in unresolved_text
-                    )
+                    assert "next function: putchar@00105000 (0x2e50 bytes after)" in unresolved_text
 
                     disasm = await _call(
                         client,

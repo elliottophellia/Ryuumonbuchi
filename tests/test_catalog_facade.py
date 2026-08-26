@@ -48,7 +48,7 @@ from ryuumonbuchi.catalog import (
 )
 
 # Full ordered digest over every spec field; guards against any field mutation.
-ORDERED_DIGEST = "206c87dfd8bb05eae209ed3455965fe0710be531345e92617d07a54f81e8529e"
+ORDERED_DIGEST = "6c8f4adc07a273ec7f4fb7c563f459426788fd1e7cde12c329744b3a25416cf9"
 # Name-order digest; guards the observable `TOOL_SPECS` order independently.
 NAME_ORDER_DIGEST = "ec7a7d374f67524cb2b73f76954d737ef77d3d0662c062202a14c07215998fa5"
 

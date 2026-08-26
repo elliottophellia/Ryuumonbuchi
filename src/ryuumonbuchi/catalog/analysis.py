@@ -107,13 +107,17 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="decomp.function",
         backend_method="decomp_function",
-        description="Decompile a function and return recovered C source code.",
+        description=(
+            "Decompile a function as complete raw Ghidra C by default, or as a non-compilable "
+            "compact view with generated local declarations elided."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "session_id": {"type": "string"},
                 "function_start": {"oneOf": [{"type": "integer"}, {"type": "string"}]},
                 "timeout_secs": {"type": "integer"},
+                "view": {"type": "string", "enum": ["raw", "compact"]},
             },
             "required": ["session_id", "function_start"],
             "additionalProperties": False,

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from concurrent.futures import Future
 from contextlib import suppress
@@ -131,9 +131,32 @@ class _AnalysisMixin:
         function_start: int | str,
         *,
         timeout_secs: int = 30,
+        view: str = "raw",
     ) -> dict[str, Any]:
+        if view not in {"raw", "compact"}:
+            raise GhidraBackendError("view must be 'raw' or 'compact'")
         function = self._resolve_function(session_id, function_start)
-        return self._decompile_function(session_id, function, timeout_secs=timeout_secs)
+        results = self._decompile_results(session_id, function, timeout_secs=timeout_secs)
+        payload = self._decompile_payload(session_id, function, results)
+        payload.update(
+            {
+                "view": view,
+                "c_is_complete": view == "raw",
+                "omitted_synthetic_declaration_count": 0,
+            }
+        )
+        if view == "compact":
+            payload["warning"] = (
+                "Compact view omits Ghidra-generated local declarations and is not compilable; "
+                "call decomp.function with view='raw' for complete C."
+            )
+            c_source = payload.get("c")
+            markup = results.getCCodeMarkup()
+            if isinstance(c_source, str) and markup is not None:
+                compact_c, omitted_count = self._compact_decompiled_c(c_source, markup)
+                payload["c"] = compact_c
+                payload["omitted_synthetic_declaration_count"] = omitted_count
+        return payload
 
     def pcode_function(
         self,
@@ -846,29 +869,6 @@ class _AnalysisMixin:
         if name not in names:
             raise GhidraBackendError(f"unknown analysis option: {name}")
 
-    def _decompile_function(
-        self, session_id: str, function: Any, *, timeout_secs: int
-    ) -> dict[str, Any]:
-        if timeout_secs <= 0:
-            raise GhidraBackendError("timeout_secs must be > 0")
-        decompiler = self._get_decompiler(session_id)
-        results = decompiler.decompileFunction(
-            function, timeout_secs, self._pyghidra.task_monitor(timeout_secs)
-        )
-        payload = {
-            "session_id": session_id,
-            "function": self._function_record(function),
-            "decompile_completed": bool(results.decompileCompleted()),
-            "timed_out": bool(results.isTimedOut()),
-            "cancelled": bool(results.isCancelled()),
-            "error_message": results.getErrorMessage(),
-        }
-        decompiled = results.getDecompiledFunction()
-        if decompiled is not None:
-            payload["c"] = decompiled.getC()
-            payload["signature"] = decompiled.getSignature()
-        return payload
-
     def _get_decompiler(self, session_id: str) -> Any:
         record = self._get_record(session_id)
         if record.decompiler is None:
@@ -972,6 +972,57 @@ class _AnalysisMixin:
             payload["c"] = decompiled.getC()
             payload["signature"] = decompiled.getSignature()
         return payload
+
+    def _compact_decompiled_c(self, c_source: str, markup: Any) -> tuple[str, int]:
+        from ghidra.app.decompiler import ClangFuncProto, ClangVariableDecl
+
+        declarations: Counter[str] = Counter()
+
+        def collect(node: Any, *, in_function_prototype: bool = False) -> None:
+            in_function_prototype = in_function_prototype or isinstance(node, ClangFuncProto)
+            if isinstance(node, ClangVariableDecl) and not in_function_prototype:
+                high_symbol = node.getHighSymbol()
+                if (
+                    high_symbol is not None
+                    and not high_symbol.isParameter()
+                    and not high_symbol.isNameLocked()
+                ):
+                    declaration = str(node).strip()
+                    if declaration:
+                        declarations[f"{declaration};"] += 1
+            for index in range(int(node.numChildren())):
+                collect(node.Child(index), in_function_prototype=in_function_prototype)
+
+        collect(markup)
+
+        output: list[str] = []
+        omitted_run: list[str] = []
+        omitted_count = 0
+
+        def flush_omitted_run() -> None:
+            if not omitted_run:
+                return
+            first_line = omitted_run[0]
+            indentation = first_line[: len(first_line) - len(first_line.lstrip())]
+            line_ending = "\n" if first_line.endswith("\n") else ""
+            count = len(omitted_run)
+            noun = "declaration" if count == 1 else "declarations"
+            output.append(
+                f"{indentation}/* {count} Ghidra-generated local {noun} omitted */{line_ending}"
+            )
+            omitted_run.clear()
+
+        for line in c_source.splitlines(keepends=True):
+            declaration = line.strip()
+            if declarations[declaration] > 0:
+                declarations[declaration] -= 1
+                omitted_run.append(line)
+                omitted_count += 1
+                continue
+            flush_omitted_run()
+            output.append(line)
+        flush_omitted_run()
+        return "".join(output), omitted_count
 
     def _high_function(self, session_id: str, function: Any, *, timeout_secs: int) -> Any:
         results = self._decompile_results(session_id, function, timeout_secs=timeout_secs)
