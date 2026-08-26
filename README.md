@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://cdn.rei.my.id/images/Ryuumonbuchi.png" alt="Ryuumonbuchi" />
+<img src="https://cdn.rei.my.id/images/Ryuumonbuchi.png?v=1.0.0" alt="Ryuumonbuchi" />
 
 # Ryuumonbuchi
 
@@ -62,13 +62,19 @@ Startup validates the installation before entering the MCP loop. It checks `Ghid
 
 ## Install
 
-Launch directly from the Git repository:
+Run the published package from PyPI:
+
+```bash
+uvx ryuumonbuchi
+```
+
+`uvx` builds an isolated environment on first run and reuses it after.
+
+To run the current main branch instead:
 
 ```bash
 uvx --from git+https://github.com/elliottophellia/Ryuumonbuchi@main ryuumonbuchi
 ```
-
-`uvx` builds an isolated environment on first run and reuses it after.
 
 For a local checkout:
 
@@ -160,8 +166,6 @@ Add the server under `mcpServers` in `.mcp.json` or `~/.claude.json`:
       "type": "stdio",
       "command": "uvx",
       "args": [
-        "--from",
-        "git+https://github.com/elliottophellia/Ryuumonbuchi@main",
         "ryuumonbuchi",
         "--ghidra-install-dir",
         "/usr/share/ghidra"
@@ -182,8 +186,7 @@ Add the server to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.ryuumonbuchi]
 command = "uvx"
-args = ["--from", "git+https://github.com/elliottophellia/Ryuumonbuchi@main", "ryuumonbuchi", "--ghidra-install-dir", "/usr/share/ghidra"]
-
+args = ["ryuumonbuchi", "--ghidra-install-dir", "/usr/share/ghidra"]
 [mcp_servers.ryuumonbuchi.env]
 RYUUMONBUCHI_MAX_CPU = "4"
 RYUUMONBUCHI_MAX_HEAP_MB = "2048"

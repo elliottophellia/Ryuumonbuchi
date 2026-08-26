@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0 - 2026-08-26
+
+### Added
+
+- Tag-triggered GitHub Releases with generated release notes and attached wheel and source distribution artifacts.
+- Automatic PyPI publication whenever a release is published.
+
+### Changed
+
+- Promoted the package maturity classifier from Alpha to Production/Stable.
+- Updated package, runtime, lockfile, and operating-skill metadata to 1.0.0.
+
 ## 0.5.0 - 2026-08-26
 
 ### Added
