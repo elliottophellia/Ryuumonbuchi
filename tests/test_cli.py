@@ -3,10 +3,16 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+from importlib.metadata import version as distribution_version
+
 import pytest
 
 from ryuumonbuchi import __version__
 from ryuumonbuchi.cli import _parser, main
+
+
+def test_runtime_version_matches_distribution_metadata() -> None:
+    assert distribution_version("ryuumonbuchi") == __version__
 
 
 def test_parser_version_flag() -> None:
