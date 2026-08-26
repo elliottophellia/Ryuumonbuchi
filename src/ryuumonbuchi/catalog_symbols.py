@@ -374,9 +374,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="bookmark.clear",
         backend_method="bookmark_clear",
-        description=(
-            "Remove bookmarks in an address range, optionally filtered by bookmarktype."
-        ),
+        description=("Remove bookmarks in an address range, optionally filtered by bookmarktype."),
         input_schema={
             "type": "object",
             "properties": {

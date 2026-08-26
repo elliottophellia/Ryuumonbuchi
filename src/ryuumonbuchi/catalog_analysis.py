@@ -374,9 +374,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="task.status",
         backend_method="task_status",
-        description=(
-            "Return status, timing, and cancellation details for an asynchronoustask."
-        ),
+        description=("Return status, timing, and cancellation details for an asynchronoustask."),
         input_schema={
             "type": "object",
             "properties": {"task_id": {"type": "string"}},
@@ -570,9 +568,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="decomp.global.rename",
         backend_method="decomp_global_rename",
-        description=(
-            "Rename a global symbol selected through decompiler high-symbolinformation."
-        ),
+        description=("Rename a global symbol selected through decompiler high-symbolinformation."),
         input_schema={
             "type": "object",
             "properties": {
@@ -594,9 +590,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="decomp.global.retype",
         backend_method="decomp_global_retype",
-        description=(
-            "Retype a global symbol selected through decompiler high-symbolinformation."
-        ),
+        description=("Retype a global symbol selected through decompiler high-symbolinformation."),
         input_schema={
             "type": "object",
             "properties": {

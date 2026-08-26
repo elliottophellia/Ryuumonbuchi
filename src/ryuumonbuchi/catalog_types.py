@@ -107,8 +107,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         name="type.parse_c",
         backend_method="type_parse_c",
         description=(
-            "Parse a C declaration and return the resulting type without necessarily"
-            "committing it."
+            "Parse a C declaration and return the resulting type without necessarilycommitting it."
         ),
         input_schema={
             "type": "object",
@@ -382,9 +381,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="layout.struct.field.replace",
         backend_method="layout_struct_field_replace",
-        description=(
-            "Replace an existing structure field with a new type, size, name, orcomment."
-        ),
+        description=("Replace an existing structure field with a new type, size, name, orcomment."),
         input_schema={
             "type": "object",
             "properties": {
@@ -586,9 +583,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="layout.struct.fill_from_decompiler",
         backend_method="layout_struct_fill_from_decompiler",
-        description=(
-            "Build or extend a structure from decompiler-observed usage of avariable."
-        ),
+        description=("Build or extend a structure from decompiler-observed usage of avariable."),
         input_schema={
             "type": "object",
             "properties": {

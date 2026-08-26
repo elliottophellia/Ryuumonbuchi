@@ -23,9 +23,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="listing.data.list",
         backend_method="binary_data",
-        description=(
-            "List defined data items in the program with range and paginationcontrols."
-        ),
+        description=("List defined data items in the program with range and paginationcontrols."),
         input_schema={
             "type": "object",
             "properties": {

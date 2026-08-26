@@ -338,9 +338,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="reference.delete",
         backend_method="reference_delete",
-        description=(
-            "Delete a specific reference selected by source, destination, andoperand."
-        ),
+        description=("Delete a specific reference selected by source, destination, andoperand."),
         input_schema={
             "type": "object",
             "properties": {
@@ -502,9 +500,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="equate.delete",
         backend_method="equate_delete",
-        description=(
-            "Delete an equate entirely, or remove one of its references beforedeletion."
-        ),
+        description=("Delete an equate entirely, or remove one of its references beforedeletion."),
         input_schema={
             "type": "object",
             "properties": {
@@ -524,9 +520,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="equate.clear_range",
         backend_method="equate_clear_range",
-        description=(
-            "Remove equate references across an address range and delete emptyequates."
-        ),
+        description=("Remove equate references across an address range and delete emptyequates."),
         input_schema={
             "type": "object",
             "properties": {
@@ -678,8 +672,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         name="relocation.add",
         backend_method="relocation_add",
         description=(
-            "Add a relocation entry at an address with type, status, values, and"
-            "symbol metadata."
+            "Add a relocation entry at an address with type, status, values, andsymbol metadata."
         ),
         input_schema={
             "type": "object",

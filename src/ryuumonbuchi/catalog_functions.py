@@ -374,9 +374,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="function.flags.set",
         backend_method="function_flags_set",
-        description=(
-            "Update function flags such as varargs, inline, noreturn, or customstorage."
-        ),
+        description=("Update function flags such as varargs, inline, noreturn, or customstorage."),
         input_schema={
             "type": "object",
             "properties": {
@@ -504,9 +502,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="variable.local.create",
         backend_method="variable_local_create",
-        description=(
-            "Create a local variable with explicit type, storage, and optionalcomment."
-        ),
+        description=("Create a local variable with explicit type, storage, and optionalcomment."),
         input_schema={
             "type": "object",
             "properties": {

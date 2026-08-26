@@ -232,9 +232,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="program.export_binary",
         backend_method="session_export_binary",
-        description=(
-            "Export the program to disk as either the original-file format or rawbytes."
-        ),
+        description=("Export the program to disk as either the original-file format or rawbytes."),
         input_schema={
             "type": "object",
             "properties": {
@@ -516,9 +514,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="project.files.list",
         backend_method="project_files_list",
-        description=(
-            "List project files with folder, content-type, query, and paginationfilters."
-        ),
+        description=("List project files with folder, content-type, query, and paginationfilters."),
         input_schema={
             "type": "object",
             "properties": {
@@ -618,9 +614,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="project.file.delete",
         backend_method="project_file_delete",
-        description=(
-            "Delete a project file by exact project path; rejects an open domainobject."
-        ),
+        description=("Delete a project file by exact project path; rejects an open domainobject."),
         input_schema={
             "type": "object",
             "properties": {"session_id": {"type": "string"}, "path": {"type": "string"}},
