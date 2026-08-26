@@ -12,7 +12,7 @@ from contextlib import suppress
 from typing import Any
 from uuid import uuid4
 
-from .backend_state import BackendConfig, GhidraBackendError, SessionRecord, TaskRecord
+from .state import BackendConfig, GhidraBackendError, SessionRecord, TaskRecord
 
 
 class _BackendCore:

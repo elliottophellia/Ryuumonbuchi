@@ -15,19 +15,37 @@ import json
 import pytest
 
 import ryuumonbuchi.catalog as catalog_module
-from ryuumonbuchi import (
-    catalog_analysis,
-    catalog_functions,
-    catalog_listing,
-    catalog_program,
-    catalog_references,
-    catalog_schema,
-    catalog_search,
-    catalog_special,
-    catalog_symbols,
-    catalog_types,
-)
 from ryuumonbuchi.catalog import TOOL_SPECS, ToolSpec
+from ryuumonbuchi.catalog import (
+    analysis as catalog_analysis,
+)
+from ryuumonbuchi.catalog import (
+    functions as catalog_functions,
+)
+from ryuumonbuchi.catalog import (
+    listing as catalog_listing,
+)
+from ryuumonbuchi.catalog import (
+    program as catalog_program,
+)
+from ryuumonbuchi.catalog import (
+    references as catalog_references,
+)
+from ryuumonbuchi.catalog import (
+    schema as catalog_schema,
+)
+from ryuumonbuchi.catalog import (
+    search as catalog_search,
+)
+from ryuumonbuchi.catalog import (
+    special as catalog_special,
+)
+from ryuumonbuchi.catalog import (
+    symbols as catalog_symbols,
+)
+from ryuumonbuchi.catalog import (
+    types as catalog_types,
+)
 
 # Full ordered digest over every spec field; guards against any field mutation.
 ORDERED_DIGEST = "206c87dfd8bb05eae209ed3455965fe0710be531345e92617d07a54f81e8529e"
@@ -87,14 +105,14 @@ def test_facade_re_exports_schema_definitions() -> None:
 
 
 MODULE_TO_PREFIXES: dict[str, tuple[str, ...]] = {
-    "catalog_program": ("ghidra", "program", "project", "transaction", "metadata"),
-    "catalog_analysis": ("analysis", "decomp", "pcode", "graph", "task"),
-    "catalog_listing": ("memory", "listing", "context", "patch"),
-    "catalog_search": ("search",),
-    "catalog_symbols": ("symbol", "comment", "bookmark", "namespace", "class", "tag"),
-    "catalog_references": ("external", "reference", "equate", "source", "relocation"),
-    "catalog_functions": ("function", "parameter", "variable", "stackframe"),
-    "catalog_types": ("type", "layout"),
+    "program": ("ghidra", "program", "project", "transaction", "metadata"),
+    "analysis": ("analysis", "decomp", "pcode", "graph", "task"),
+    "listing": ("memory", "listing", "context", "patch"),
+    "search": ("search",),
+    "symbols": ("symbol", "comment", "bookmark", "namespace", "class", "tag"),
+    "references": ("external", "reference", "equate", "source", "relocation"),
+    "functions": ("function", "parameter", "variable", "stackframe"),
+    "types": ("type", "layout"),
 }
 
 SPECIAL_NAMES = ("health.ping", "mcp.response_format", "headless.run", "operation.batch")

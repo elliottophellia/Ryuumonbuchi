@@ -6,7 +6,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from .backend_state import MAX_MEMORY_READ_BYTES, GhidraBackendError
+from .state import MAX_MEMORY_READ_BYTES, GhidraBackendError
 
 
 class _ListingMixin:
