@@ -131,6 +131,22 @@ A first-analysis sequence:
 5. `decomp.function` on a function start address.
 6. `program.close`.
 
+### Function addresses and decompiler views
+
+Function tools accept exact function entries and addresses contained within a function. An unresolved address remains an error rather than selecting a nearby function; the error reports the normalized address plus the nearest previous and next function entries.
+
+`decomp.function` defaults to `view: "raw"`, the complete Ghidra C output. Use `view: "compact"` only for initial triage of declaration-heavy functions:
+
+```json
+{
+  "session_id": "<session_id>",
+  "function_start": 1053104,
+  "view": "compact"
+}
+```
+
+Compact output conservatively elides Ghidra-generated local declarations, is not compilable, and reports the omission count. Return to raw C, `decomp.tokens`, `decomp.ast`, or p-code when exact structure matters.
+
 Typed tools come first. Sessions open read-only by default; switch `program.mode.set` to `read_only: false` only before intended mutations. Use `operation.batch` for 1 to 32 atomic program-bound calls. Treat `ghidra.call`, `ghidra.eval`, `ghidra.script`, and `headless.run` as open-world execution. Inspect the second `TextContent` block for the full JSON result; the first is a compact summary. Close sessions with `program.close` when done.
 
 ### Claude Code
