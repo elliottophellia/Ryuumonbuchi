@@ -25,6 +25,7 @@ class _ResolverMixin:
             hint = self._function_neighbor_hint(manager, addr)
             raise GhidraBackendError(f"no function found at {normalized}; {hint}")
         return function
+
     def _function_neighbor_hint(self, manager: Any, address: Any) -> str:
         def nearest(forward: bool) -> Any | None:
             functions = manager.getFunctions(address, forward)
