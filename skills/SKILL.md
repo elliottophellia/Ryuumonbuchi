@@ -28,11 +28,15 @@ Analysis updates the Ghidra database and is cataloged as mutating, so it is allo
 
 Prefer `program.summary` and `program.report` first, then `search.*` and `function.*`, then `decomp.function` plus listing, p-code, references, and graph tools. Move to types/layouts and typed mutation tools when the recovered surface is clear. Reserve `ghidra.call`, `ghidra.eval`, and `ghidra.script` for gaps in the typed catalog.
 
+For declaration-heavy functions, `decomp.function` with `view: "compact"` is useful for initial reading. Compact output is declaration-elided and non-compilable; return to the default raw view, `decomp.tokens`, `decomp.ast`, or p-code for exact analysis.
+
 Raw tools reject a read-only session unless `write: true` is set. `write: true` permanently transitions the selected session (or every open session, for sessionless writable eval) to writable.
 
 ## Address discipline
 
 Tools accept integer or string addresses. Prefer decimal integers when feeding tool output back through an agent adapter, because some normalizers misread hex-looking strings. Resolve uncertain symbols with `search.resolve`, `symbol.by_name`, or `function.by_name`. Never guess an address.
+
+Function resolution remains strict: tools accept exact entries or addresses contained within a function, but never select a nearby function for an unresolved address. The error reports the normalized address and nearest previous and next function entries with distances; use those hints to correct the input.
 
 Concretely, hex strings containing the digit `e` (e.g. `"001019e7"`) get stripped of leading zeros and parsed as scientific notation (`1019e7`) by some adapters, routing every address-taking tool to a bogus `ram:` address. Compute the integer once and pass it everywhere: `printf '%d' 0x1019e7` → `1055207`. `function.list` and `search.defined_strings` return addresses as hex strings; convert to `int` before feeding back into `memory.read`, `memory.write`, `patch.*`, `decomp.function`, or `listing.*`.
 

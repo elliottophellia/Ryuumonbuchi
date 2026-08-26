@@ -2,10 +2,18 @@
 
 ## 0.5.0 - 2026-08-26
 
+### Added
+
+- An opt-in compact `decomp.function` view for declaration-heavy functions. The default raw view remains complete Ghidra C; compact output is explicitly marked incomplete and non-compilable.
+
 ### Changed
 
 - Split the PyGhidra backend into responsibility-focused mixins behind the unchanged `ryuumonbuchi.backend.GhidraBackend` façade, preserving the 216-tool catalog and 212 backend method contracts.
 - Split the authoritative tool catalog into responsibility-focused spec modules behind the unchanged `ryuumonbuchi.catalog` façade, preserving all 216 tool definitions, 212 backend mappings, schemas, annotations, batch eligibility, and registry order.
+
+### Fixed
+
+- Unresolved function addresses now remain strict errors while reporting the normalized address and nearest previous and next function entries with distances.
 
 ## 0.4.0 - 2026-08-26
 
