@@ -1,8 +1,9 @@
 """Structural contract for the modular `ryuumonbuchi.catalog` façade.
 
-Pin the registry snapshot and lock `ToolSpec`'s shape so that extracting
-responsibility-focused spec modules behind an unchanged façade cannot silently
-reorder, drop, or alter any tool definition.
+Pin the registry snapshot, lock `ToolSpec`'s shape, and assert that each
+responsibility-focused spec module owns exactly its assigned tools and that the
+façade exposes those objects by identity. An extraction cannot silently reorder,
+drop, alter, or duplicate any tool definition.
 """
 
 from __future__ import annotations
@@ -14,7 +15,18 @@ import json
 import pytest
 
 import ryuumonbuchi.catalog as catalog_module
-from ryuumonbuchi import catalog_schema
+from ryuumonbuchi import (
+    catalog_analysis,
+    catalog_functions,
+    catalog_listing,
+    catalog_program,
+    catalog_references,
+    catalog_schema,
+    catalog_search,
+    catalog_special,
+    catalog_symbols,
+    catalog_types,
+)
 from ryuumonbuchi.catalog import TOOL_SPECS, ToolSpec
 
 # Full ordered digest over every spec field; guards against any field mutation.
@@ -72,3 +84,64 @@ def test_facade_re_exports_schema_definitions() -> None:
     assert catalog_module.ToolSpec is catalog_schema.ToolSpec
     assert catalog_module.ADDRESS_SCHEMA is catalog_schema.ADDRESS_SCHEMA
     assert catalog_module.ADDRESS_PARAM_NAMES is catalog_schema.ADDRESS_PARAM_NAMES
+
+
+MODULE_TO_PREFIXES: dict[str, tuple[str, ...]] = {
+    "catalog_program": ("ghidra", "program", "project", "transaction", "metadata"),
+    "catalog_analysis": ("analysis", "decomp", "pcode", "graph", "task"),
+    "catalog_listing": ("memory", "listing", "context", "patch"),
+    "catalog_search": ("search",),
+    "catalog_symbols": ("symbol", "comment", "bookmark", "namespace", "class", "tag"),
+    "catalog_references": ("external", "reference", "equate", "source", "relocation"),
+    "catalog_functions": ("function", "parameter", "variable", "stackframe"),
+    "catalog_types": ("type", "layout"),
+}
+
+SPECIAL_NAMES = ("health.ping", "mcp.response_format", "headless.run", "operation.batch")
+
+DOMAIN_MODULES = (
+    catalog_program,
+    catalog_analysis,
+    catalog_listing,
+    catalog_search,
+    catalog_symbols,
+    catalog_references,
+    catalog_functions,
+    catalog_types,
+    catalog_special,
+)
+
+
+def _owned_names(module: object) -> set[str]:
+    return {spec.name for spec in module.TOOL_SPECS}  # type: ignore[attr-defined]
+
+
+def _facade_by_identity() -> dict[str, ToolSpec]:
+    return {spec.name: spec for spec in TOOL_SPECS}
+
+
+def test_domain_ownership_matches_prefix_map() -> None:
+    for module in DOMAIN_MODULES:
+        if module is catalog_special:
+            assert _owned_names(module) == set(SPECIAL_NAMES)
+            continue
+        prefixes = MODULE_TO_PREFIXES[module.__name__.rsplit(".", 1)[-1]]
+        for name in _owned_names(module):
+            assert name.split(".")[0] in prefixes, f"{module.__name__} owns unexpected {name}"
+
+
+def test_domain_ownership_is_exhaustive() -> None:
+    owned: set[str] = set()
+    for module in DOMAIN_MODULES:
+        owned |= _owned_names(module)
+    assert owned == {spec.name for spec in TOOL_SPECS}
+    assert len(owned) == 216
+
+
+def test_domain_objects_present_by_identity_in_facade() -> None:
+    facade = _facade_by_identity()
+    for module in DOMAIN_MODULES:
+        for spec in module.TOOL_SPECS:
+            assert facade[spec.name] is spec, (
+                f"{spec.name}: facade object differs from {module.__name__} object"
+            )
