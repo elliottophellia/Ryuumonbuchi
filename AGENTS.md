@@ -14,7 +14,18 @@ Instructions for contributors who edit this repository. These are durable conven
 | `src/ryuumonbuchi/cli.py` | Startup, argument parsing, exit code 2 on config failure |
 | `src/ryuumonbuchi/config.py` | Limits, validation, environment names, precedence |
 | `src/ryuumonbuchi/server.py` | MCP boundary and policy dispatch |
-| `src/ryuumonbuchi/catalog.py` | Authoritative tool schemas and annotations |
+| `src/ryuumonbuchi/catalog/__init__.py` | Authoritative tool schemas and annotations |
+| `src/ryuumonbuchi/catalog/schema.py` | `ToolSpec` dataclass and input-schema helpers |
+| `src/ryuumonbuchi/catalog/order.py` | Canonical tool ordering |
+| `src/ryuumonbuchi/catalog/program.py` | Program/project/transaction/metadata specs |
+| `src/ryuumonbuchi/catalog/analysis.py` | Analysis/decompiler/graph/task specs |
+| `src/ryuumonbuchi/catalog/listing.py` | Memory/listing/context/patch specs |
+| `src/ryuumonbuchi/catalog/search.py` | Search specs |
+| `src/ryuumonbuchi/catalog/symbols.py` | Symbol/comment/bookmark/namespace/tag specs |
+| `src/ryuumonbuchi/catalog/references.py` | External/reference/equate/source/relocation specs |
+| `src/ryuumonbuchi/catalog/functions.py` | Function/parameter/variable/stackframe specs |
+| `src/ryuumonbuchi/catalog/types.py` | Type/layout specs |
+| `src/ryuumonbuchi/catalog/special.py` | Special-routed specs (`health.ping`, `headless.run`, etc.) |
 | `src/ryuumonbuchi/process.py` | Parent worker lifecycle |
 | `src/ryuumonbuchi/models.py` | Protocol-v2 wire frames |
 | `src/ryuumonbuchi/worker/__main__.py` | Child dispatch and result spilling |

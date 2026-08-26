@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .catalog_schema import ToolSpec
+from .schema import ToolSpec
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(

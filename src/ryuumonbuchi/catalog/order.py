@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ryuumonbuchi.catalog_schema import ToolSpec
+from .schema import ToolSpec
 
 TOOL_ORDER: tuple[str, ...] = (
     "health.ping",

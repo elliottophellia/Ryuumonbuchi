@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-from .catalog_analysis import TOOL_SPECS as _ANALYSIS_SPECS
-from .catalog_functions import TOOL_SPECS as _FUNCTIONS_SPECS
-from .catalog_listing import TOOL_SPECS as _LISTING_SPECS
-from .catalog_order import order_specs as _order_specs
-from .catalog_program import TOOL_SPECS as _PROGRAM_SPECS
-from .catalog_references import TOOL_SPECS as _REFERENCES_SPECS
-from .catalog_schema import (
+from .analysis import TOOL_SPECS as _ANALYSIS_SPECS
+from .functions import TOOL_SPECS as _FUNCTIONS_SPECS
+from .listing import TOOL_SPECS as _LISTING_SPECS
+from .order import order_specs as _order_specs
+from .program import TOOL_SPECS as _PROGRAM_SPECS
+from .references import TOOL_SPECS as _REFERENCES_SPECS
+from .schema import (
     ADDRESS_PARAM_NAMES,
     ADDRESS_SCHEMA,
     ToolSpec,
 )
-from .catalog_schema import (
+from .schema import (
     apply_schema_bounds as _apply_schema_bounds,
 )
-from .catalog_search import TOOL_SPECS as _SEARCH_SPECS
-from .catalog_special import TOOL_SPECS as _SPECIAL_SPECS
-from .catalog_symbols import TOOL_SPECS as _SYMBOLS_SPECS
-from .catalog_types import TOOL_SPECS as _TYPES_SPECS
+from .search import TOOL_SPECS as _SEARCH_SPECS
+from .special import TOOL_SPECS as _SPECIAL_SPECS
+from .symbols import TOOL_SPECS as _SYMBOLS_SPECS
+from .types import TOOL_SPECS as _TYPES_SPECS
 
 __all__ = [
     "ADDRESS_PARAM_NAMES",
@@ -72,7 +72,7 @@ def assert_catalog_consistency() -> None:
     special = {"health.ping", "mcp.response_format", "headless.run", "operation.batch"}
     import inspect
 
-    from .backend import GhidraBackend
+    from ..backend import GhidraBackend
 
     for spec in TOOL_SPECS:
         Draft202012Validator.check_schema(spec.input_schema)
