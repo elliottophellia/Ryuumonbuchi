@@ -13,6 +13,8 @@ import json
 
 import pytest
 
+import ryuumonbuchi.catalog as catalog_module
+from ryuumonbuchi import catalog_schema
 from ryuumonbuchi.catalog import TOOL_SPECS, ToolSpec
 
 # Full ordered digest over every spec field; guards against any field mutation.
@@ -64,3 +66,9 @@ def test_tool_spec_is_frozen_slotted_eight_field_dataclass() -> None:
     spec = TOOL_SPECS[0]
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.name = "mutated"  # type: ignore[misc]
+
+
+def test_facade_re_exports_schema_definitions() -> None:
+    assert catalog_module.ToolSpec is catalog_schema.ToolSpec
+    assert catalog_module.ADDRESS_SCHEMA is catalog_schema.ADDRESS_SCHEMA
+    assert catalog_module.ADDRESS_PARAM_NAMES is catalog_schema.ADDRESS_PARAM_NAMES
