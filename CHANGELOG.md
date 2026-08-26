@@ -5,6 +5,7 @@
 ### Changed
 
 - Split the PyGhidra backend into responsibility-focused mixins behind the unchanged `ryuumonbuchi.backend.GhidraBackend` façade, preserving the 216-tool catalog and 212 backend method contracts.
+- Split the authoritative tool catalog into responsibility-focused spec modules behind the unchanged `ryuumonbuchi.catalog` façade, preserving all 216 tool definitions, 212 backend mappings, schemas, annotations, batch eligibility, and registry order.
 
 ## 0.4.0 - 2026-08-26
 
