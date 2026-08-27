@@ -6,22 +6,18 @@
 
 **Maybe the headless Ghidra MCP you are looking for.**
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
+[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](LICENSE)
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
-
-A 217-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio or streamable HTTP, and drives one persistent PyGhidra/JVM backend per connection.
-
-[Overview](#overview) &middot; [Architecture](#architecture) &middot; [Prerequisites](#prerequisites) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage) &middot; [Development](#development)
 
 </div>
 
 ## Overview
 
-Ryuumonbuchi turns Ghidra into an MCP tool server. An agent connects over stdio or streamable HTTP, opens a binary, and drives analysis through typed tool calls: decompilation, disassembly, type reconstruction, patching, symbol and memory edits, and project export. No GUI automation, no hand-written `analyzeHeadless` scripts.
+Ryuumonbuchi turns Ghidra into a 217-tool [Model Context Protocol](https://modelcontextprotocol.io) server. An LLM agent opens a binary and drives analysis through typed tool calls: decompilation, disassembly, type reconstruction, patching, symbol and memory edits, and project export. No GUI automation, no hand-written `analyzeHeadless` scripts.
 
-The server uses the low-level MCP SDK (`mcp.server.lowlevel`) with a registry generated from one authoritative catalog. The catalog declares 217 dotted tool names. 212 of them map one-to-one onto methods of a persistent backend; `health.ping` and `mcp.response_format` are server-native, `headless.run` and `headless.start` are the native launcher paths, and `operation.batch` is the batching dispatcher. The catalog does not promise coverage of every Ghidra API; it covers the surface those 212 methods implement.
+The server builds on the low-level MCP SDK (`mcp.server.lowlevel`) with a registry generated from one authoritative catalog. The catalog declares 217 dotted tool names; 212 map one-to-one onto methods of a persistent PyGhidra backend. `health.ping` and `mcp.response_format` are server-native, `headless.run` and `headless.start` are the native launcher paths, and `operation.batch` is the batching dispatcher.
 
 Behind the transport, one persistent worker child holds a live PyGhidra/JVM session for the whole MCP lifespan. Repeated calls reuse the warmed backend instead of paying JVM startup per request.
 
@@ -49,16 +45,11 @@ Three dispatch paths:
 2. `headless.run`: spawns `support/analyzeHeadless` directly with the caller's argv in its own process group. No shell, no rewriting of arguments.
 3. `operation.batch`: 1 to 32 worker tools in one call; read-only batches run without a transaction, mutating batches wrap in one undo transaction with rollback on error.
 
-The private mode-0700 workspace owns every managed Ghidra project, worker log file, and native capture file. Oversized worker results spill to mode-0600 files under the workspace and are reloaded internally; they are not surfaced to the MCP client as a path contract.
-
 ## Prerequisites
 
-- Linux or macOS host. Windows is not yet supported: worker IPC, file locking, process groups, and PTY capture require a POSIX host.
-- Python `>=3.11,<3.14`.
-- Ghidra 12.0 or newer, with metadata declaring a Java minimum of 21 (`application.java.min`) and support for the running interpreter's minor version (`application.python.supported`). Ghidra bundles its own JDK, so no separate Java install is required when it is present.
-- [uv](https://docs.astral.sh/uv/) for the documented workflow.
-
-Startup validates the installation before entering the MCP loop. It checks `Ghidra/application.properties`, `Ghidra/Features/PyGhidra/lib/PyGhidra.jar`, and `support/analyzeHeadless`, then exits with code 2 on any configuration failure.
+- Ghidra 12.0 or newer. Its bundled JDK supplies Java, so no separate Java install is needed.
+- Python 3.10 through 3.13. Python 3.14 is not yet supported: `pyghidra` pins `Jpype1==1.5.2`, which ships no Python 3.14 wheel.
+- [uv](https://docs.astral.sh/uv/) to run the documented workflow.
 
 ## Install
 

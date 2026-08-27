@@ -7,7 +7,7 @@ name = "ryuumonbuchi"
 version = "1.1.0"
 description = "maybe the headless ghidra mcp you are looking for"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.10,<3.14"
 license = "GPL-2.0-only"
 license-files = ["LICENSE"]
 authors = [{ name = "Ryuumonbuchi contributors" }]
@@ -17,6 +17,7 @@ classifiers = [
   "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -49,7 +50,7 @@ dev = [
 default-groups = ["dev"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
@@ -70,7 +71,7 @@ line-ending = "lf"
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-pythonVersion = "3.11"
+pythonVersion = "3.10"
 venvPath = "."
 venv = ".venv"
 

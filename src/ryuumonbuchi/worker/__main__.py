@@ -221,16 +221,8 @@ def _dispatch_batch(
             record.active_transaction_description = "Ryuumonbuchi operation.batch"
 
         for tool, args, _read_only in validated:
-            try:
-                result = _dispatch_call(backend, tool, args)
-                results.append({"tool": tool, "result": result})
-            except Exception:
-                if tx_id is not None:
-                    backend._get_program(session_id).endTransaction(tx_id, False)  # noqa: SLF001
-                    tx_id = None
-                    record.active_transaction_id = None
-                    record.active_transaction_description = None
-                raise
+            result = _dispatch_call(backend, tool, args)
+            results.append({"tool": tool, "result": result})
 
         if tx_id is not None:
             backend._get_program(session_id).endTransaction(tx_id, True)  # noqa: SLF001

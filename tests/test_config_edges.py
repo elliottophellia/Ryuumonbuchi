@@ -162,7 +162,7 @@ def test_validate_ghidra_version_too_old(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=11.3.2\n"
         "application.java.min=21\n"
-        "application.python.supported=3.13,3.12,3.11\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -175,7 +175,7 @@ def test_validate_ghidra_missing_version(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.java.min=21\napplication.python.supported=3.13,3.12,3.11\n",
+        "application.java.min=21\napplication.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -190,7 +190,7 @@ def test_validate_ghidra_java_min_too_low(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=17\n"
-        "application.python.supported=3.13,3.12,3.11\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -248,7 +248,7 @@ def test_validate_ghidra_invalid_java_min(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=notanumber\n"
-        "application.python.supported=3.13,3.12,3.11\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -270,7 +270,7 @@ def test_validate_ghidra_missing_required_path(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=21\n"
-        "application.python.supported=3.13,3.12,3.11\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     # Missing PyGhidra.jar
     (root / "support/analyzeHeadless").touch()

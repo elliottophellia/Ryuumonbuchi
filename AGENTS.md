@@ -50,7 +50,7 @@ Instructions for contributors who edit this repository. These are durable conven
 
 Preserve these when editing. An intentional break requires updating the exact-set tests in the same change.
 
-- Runtime is Python 3.11–3.13, Linux or macOS, Ghidra 12+. Windows is unsupported.
+- Runtime is Python 3.10–3.13, Linux or macOS, Ghidra 12+. Windows is unsupported.
 - `health.ping` remains JVM-lazy; it never starts the backend.
 - The catalog declares 217 unique dotted tool names and 212 one-to-one backend methods. Changing either count updates `tests/test_catalog.py`.
 - Root schemas reject extra properties and bound arrays, pages, and payloads.
