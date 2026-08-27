@@ -155,6 +155,20 @@ def test_resolve_ghidra_install_dir_env(monkeypatch: pytest.MonkeyPatch, fake_gh
     assert resolved == fake_ghidra.resolve()
 
 
+def test_resolve_ghidra_install_dir_linux_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    assert resolve_ghidra_install_dir(environ={}) == Path("/usr/share/ghidra")
+
+
+def test_resolve_ghidra_install_dir_macos_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    assert resolve_ghidra_install_dir(environ={}) == Path("/opt/homebrew/share/ghidra")
+
+
 def test_validate_config(fake_ghidra: Path) -> None:
     config = build_config(ghidra_install_dir=str(fake_ghidra))
     installation = validate_config(config)

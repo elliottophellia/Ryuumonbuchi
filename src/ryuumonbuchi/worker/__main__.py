@@ -44,6 +44,9 @@ def _build_config(raw: dict[str, Any]) -> BackendConfig:
 
 
 def _apply_cpu_affinity(max_cpu: int) -> int:
+    if not hasattr(os, "sched_getaffinity"):
+        # macOS has no affinity API; the JVM inherits the host CPU set.
+        return max(1, min(max_cpu, os.cpu_count() or 1))
     allowed = list(os.sched_getaffinity(0))  # type: ignore[attr-defined]
     if not allowed:
         raise RuntimeError("empty CPU affinity set")

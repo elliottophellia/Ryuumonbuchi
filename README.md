@@ -11,7 +11,7 @@
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
 
-A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and Python 3.11 through 3.13, speaks MCP over stdio, and drives one persistent PyGhidra/JVM backend per connection.
+A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio, and drives one persistent PyGhidra/JVM backend per connection.
 
 [Overview](#overview) &middot; [Architecture](#architecture) &middot; [Prerequisites](#prerequisites) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage) &middot; [Development](#development)
 
@@ -53,7 +53,7 @@ The private mode-0700 workspace owns every managed Ghidra project, worker log fi
 
 ## Prerequisites
 
-- Linux host.
+- Linux or macOS host. Windows is not yet supported: worker IPC, file locking, process groups, and PTY capture require a POSIX host.
 - Python `>=3.11,<3.14`.
 - Ghidra 12.0 or newer, with metadata declaring a Java minimum of 21 (`application.java.min`) and support for the running interpreter's minor version (`application.python.supported`). Ghidra bundles its own JDK, so no separate Java install is required when it is present.
 - [uv](https://docs.astral.sh/uv/) for the documented workflow.
@@ -91,7 +91,7 @@ Precedence is CLI flag over environment variable over built-in default. Classpat
 
 | CLI flag | Environment variable | Default | Description |
 |---|---|---|---|
-| `--ghidra-install-dir PATH` | `GHIDRA_INSTALL_DIR` | `/usr/share/ghidra` | Ghidra installation root |
+| `--ghidra-install-dir PATH` | `GHIDRA_INSTALL_DIR` | `/usr/share/ghidra` (`/opt/homebrew/share/ghidra` on macOS) | Ghidra installation root |
 | `--max-heap-mb MIB` | `RYUUMONBUCHI_MAX_HEAP_MB` | `1024` | Worker JVM max heap, 256 to 8192 |
 | `--max-cpu COUNT` | `RYUUMONBUCHI_MAX_CPU` | `2` | Worker CPU affinity count, 1 to `os.cpu_count()` |
 | `--operation-timeout-seconds SECONDS` | `RYUUMONBUCHI_OPERATION_TIMEOUT_SECONDS` | `900` | Per-operation wall-clock deadline, 30 to 86400 |

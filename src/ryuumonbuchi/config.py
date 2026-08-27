@@ -56,6 +56,7 @@ class AppConfig:
 
 
 _DEFAULT_GHIDRA_DIR: Final = Path("/usr/share/ghidra")
+_MACOS_GHIDRA_DIR: Final = Path("/opt/homebrew/share/ghidra")
 _LIMIT_ENV_NAMES: Final = {
     "max_heap_mb": "RYUUMONBUCHI_MAX_HEAP_MB",
     "max_cpu": "RYUUMONBUCHI_MAX_CPU",
@@ -192,14 +193,23 @@ def _resolve_vm_args(cli_vmargs: list[str] | None, environ: Mapping[str, str]) -
     return tuple(entries)
 
 
+def _platform_default_ghidra_dir() -> Path:
+    """Return the conventional installation directory for the running platform."""
+    if platform.system() == "Darwin":
+        return _MACOS_GHIDRA_DIR
+    return _DEFAULT_GHIDRA_DIR
+
+
 def resolve_ghidra_install_dir(
     cli_value: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> Path:
-    """Resolve the installation only from CLI, environment, then the fixed default."""
+    """Resolve the installation only from CLI, environment, then the platform default."""
     env = os.environ if environ is None else environ
     selected = (
-        cli_value if cli_value is not None else env.get("GHIDRA_INSTALL_DIR", _DEFAULT_GHIDRA_DIR)
+        cli_value
+        if cli_value is not None
+        else env.get("GHIDRA_INSTALL_DIR", _platform_default_ghidra_dir())
     )
     return Path(selected).expanduser().resolve()
 
@@ -269,8 +279,12 @@ def _parse_version(raw: str) -> tuple[int, int, int]:
 def validate_ghidra_installation(path: str | Path) -> GhidraInstallation:
     """Validate the selected Ghidra layout and supported runtime metadata."""
 
-    if platform.system() != "Linux":
-        message = "Ryuumonbuchi requires a POSIX/Linux host for process isolation"
+    if platform.system() not in {"Linux", "Darwin"}:
+        message = (
+            "Ryuumonbuchi supports Linux and macOS; "
+            "Windows is not yet supported (worker IPC, file locking, "
+            "process groups, and PTY capture require a POSIX host)"
+        )
         raise ConfigError(message)
     resolved = Path(path).expanduser().resolve()
     if not resolved.exists():
