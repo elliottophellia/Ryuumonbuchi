@@ -69,6 +69,34 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         batch_allowed=False,
     ),
     ToolSpec(
+        name="headless.start",
+        backend_method=None,
+        description=(
+            "Start analyzeHeadless in the background and return a native task id for"
+            "task.status/task.result/task.cancel polling."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "arguments": {"type": "array", "items": {"type": "string"}, "maxItems": 1000},
+                "working_directory": {"type": ["string", "null"]},
+                "environment": {"type": "object", "additionalProperties": {"type": "string"}},
+                "stdin_text": {"type": ["string", "null"]},
+                "timeout_seconds": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 86400,
+                },
+            },
+            "required": ["arguments"],
+            "additionalProperties": False,
+        },
+        read_only=False,
+        destructive=True,
+        open_world=True,
+        batch_allowed=False,
+    ),
+    ToolSpec(
         name="operation.batch",
         backend_method=None,
         description=(

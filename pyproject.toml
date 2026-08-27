@@ -4,10 +4,10 @@ build-backend = "uv_build"
 
 [project]
 name = "ryuumonbuchi"
-version = "1.0.0"
+version = "1.1.0"
 description = "maybe the headless ghidra mcp you are looking for"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.10,<3.14"
 license = "GPL-2.0-only"
 license-files = ["LICENSE"]
 authors = [{ name = "Ryuumonbuchi contributors" }]
@@ -15,7 +15,11 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+  "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Security",
   "Topic :: Software Development :: Debuggers",
@@ -26,6 +30,7 @@ dependencies = [
   "pyghidra>=3.0.2,<4",
   "anyio>=4.9,<5",
   "jsonschema>=4.20,<5",
+  "uvicorn>=0.31.1,<1",
 ]
 
 [project.scripts]
@@ -45,7 +50,7 @@ dev = [
 default-groups = ["dev"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
@@ -66,7 +71,7 @@ line-ending = "lf"
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-pythonVersion = "3.13"
+pythonVersion = "3.10"
 venvPath = "."
 venv = ".venv"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # pyright: reportPrivateUsage=false
+import sys
 from pathlib import Path
 
 import pytest
@@ -161,7 +162,7 @@ def test_validate_ghidra_version_too_old(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=11.3.2\n"
         "application.java.min=21\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -174,7 +175,7 @@ def test_validate_ghidra_missing_version(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.java.min=21\napplication.python.supported=3.13,3.12\n",
+        "application.java.min=21\napplication.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -189,7 +190,7 @@ def test_validate_ghidra_java_min_too_low(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=17\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -202,12 +203,29 @@ def test_validate_ghidra_python_unsupported(tmp_path: Path) -> None:
     (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
     (root / "support").mkdir()
     (root / "Ghidra/application.properties").write_text(
-        "application.version=12.0.4\napplication.java.min=21\napplication.python.supported=3.12\n",
+        "application.version=12.0.4\napplication.java.min=21\napplication.python.supported=1.0\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
-    with pytest.raises(ConfigError, match="Python 3.13"):
+    with pytest.raises(ConfigError, match=r"does not support Python"):
         validate_ghidra_installation(root)
+
+
+def test_validate_ghidra_python_matches_running_interpreter(tmp_path: Path) -> None:
+    """Only the running interpreter's minor version has to appear in the metadata."""
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+    root = tmp_path / "ghidra"
+    (root / "Ghidra/Features/PyGhidra/lib").mkdir(parents=True)
+    (root / "support").mkdir()
+    (root / "Ghidra/application.properties").write_text(
+        "application.version=12.0.4\n"
+        "application.java.min=21\n"
+        f"application.python.supported={running}\n",
+    )
+    (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
+    (root / "support/analyzeHeadless").touch()
+    installation = validate_ghidra_installation(root)
+    assert installation.python_supported == (running,)
 
 
 def test_validate_ghidra_missing_python_supported(tmp_path: Path) -> None:
@@ -230,7 +248,7 @@ def test_validate_ghidra_invalid_java_min(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=notanumber\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
     (root / "support/analyzeHeadless").touch()
@@ -252,7 +270,7 @@ def test_validate_ghidra_missing_required_path(tmp_path: Path) -> None:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=21\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.python.supported=3.13,3.12,3.11,3.10\n",
     )
     # Missing PyGhidra.jar
     (root / "support/analyzeHeadless").touch()
@@ -280,5 +298,6 @@ def test_current_python_version() -> None:
     version = current_python_version()
     parts = version.split(".")
     assert len(parts) == 3
-    assert int(parts[0]) == 3
-    assert int(parts[1]) == 13
+    assert int(parts[0]) == sys.version_info.major
+    assert int(parts[1]) == sys.version_info.minor
+    assert int(parts[2]) == sys.version_info.micro

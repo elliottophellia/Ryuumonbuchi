@@ -29,7 +29,7 @@ def test_assert_catalog_consistency_array_without_items_raises() -> None:
         batch_allowed=False,
     )
     original = catalog_module.TOOL_SPECS
-    # Replace the last spec with our bad one to keep the count at 216
+    # Replace the last spec with our bad one to keep the count at 217
     bad_specs = list(original[:-1]) + [bad_spec]
     try:
         catalog_module.TOOL_SPECS = tuple(bad_specs)

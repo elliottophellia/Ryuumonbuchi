@@ -74,4 +74,5 @@ class TaskRecord:
     session_id: str | None
     cancel_hook: Callable[[], None] | None = None
     cancel_requested: bool = False
+    monitor: Any = None
     created_at: float = field(default_factory=time.time)

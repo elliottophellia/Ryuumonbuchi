@@ -48,9 +48,9 @@ from ryuumonbuchi.catalog import (
 )
 
 # Full ordered digest over every spec field; guards against any field mutation.
-ORDERED_DIGEST = "6c8f4adc07a273ec7f4fb7c563f459426788fd1e7cde12c329744b3a25416cf9"
+ORDERED_DIGEST = "ade40ed033a3677c47921706a433307c794bd11661d37599222b63c563cb7091"
 # Name-order digest; guards the observable `TOOL_SPECS` order independently.
-NAME_ORDER_DIGEST = "ec7a7d374f67524cb2b73f76954d737ef77d3d0662c062202a14c07215998fa5"
+NAME_ORDER_DIGEST = "15720b263ec7cf3e586494b8c7d0639bcfb6e3c6977c107501738c05bf355100"
 
 
 def _ordered_digest() -> str:
@@ -115,7 +115,13 @@ MODULE_TO_PREFIXES: dict[str, tuple[str, ...]] = {
     "types": ("type", "layout"),
 }
 
-SPECIAL_NAMES = ("health.ping", "mcp.response_format", "headless.run", "operation.batch")
+SPECIAL_NAMES = (
+    "health.ping",
+    "mcp.response_format",
+    "headless.run",
+    "headless.start",
+    "operation.batch",
+)
 
 DOMAIN_MODULES = (
     catalog_program,
@@ -153,7 +159,7 @@ def test_domain_ownership_is_exhaustive() -> None:
     for module in DOMAIN_MODULES:
         owned |= _owned_names(module)
     assert owned == {spec.name for spec in TOOL_SPECS}
-    assert len(owned) == 216
+    assert len(owned) == 217
 
 
 def test_domain_objects_present_by_identity_in_facade() -> None:

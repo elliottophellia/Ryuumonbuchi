@@ -244,13 +244,22 @@ def test_async_read_exact_partial_eof() -> None:
     asyncio.run(_run())
 
 
-def test_config_non_linux_rejected(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """validate_ghidra_installation rejects non-Linux platforms."""
+def test_config_windows_rejected(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """validate_ghidra_installation rejects Windows hosts."""
     import platform
 
     monkeypatch.setattr(platform, "system", lambda: "Windows")
-    with pytest.raises(ConfigError, match="POSIX/Linux"):
+    with pytest.raises(ConfigError, match="not yet supported"):
         validate_ghidra_installation(fake_ghidra)
+
+
+def test_config_macos_accepted(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """validate_ghidra_installation accepts Darwin hosts."""
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    installation = validate_ghidra_installation(fake_ghidra)
+    assert installation.path == fake_ghidra.resolve()
 
 
 def test_cli_run_server_called(fake_ghidra: Path, monkeypatch: pytest.MonkeyPatch) -> None:

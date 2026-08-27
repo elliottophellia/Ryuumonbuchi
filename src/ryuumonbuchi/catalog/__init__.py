@@ -1,4 +1,4 @@
-"""Authoritative 216-tool registry: names, schemas, annotations, batch eligibility."""
+"""Authoritative 217-tool registry: names, schemas, annotations, batch eligibility."""
 
 from __future__ import annotations
 
@@ -63,13 +63,19 @@ def assert_catalog_consistency() -> None:
 
     names = [spec.name for spec in TOOL_SPECS]
     assert len(names) == len(set(names)), "duplicate tool names"
-    assert len(TOOL_SPECS) == 216, f"expected 216 tools, got {len(TOOL_SPECS)}"
+    assert len(TOOL_SPECS) == 217, f"expected 217 tools, got {len(TOOL_SPECS)}"
     for name in names:
         assert "." in name, f"non-dotted tool name: {name}"
 
     # Valid Draft 2020-12 schemas.
     Draft202012Validator = jsonschema.Draft202012Validator
-    special = {"health.ping", "mcp.response_format", "headless.run", "operation.batch"}
+    special = {
+        "health.ping",
+        "mcp.response_format",
+        "headless.run",
+        "headless.start",
+        "operation.batch",
+    }
     import inspect
 
     from ..backend import GhidraBackend
