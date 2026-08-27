@@ -358,7 +358,9 @@ async def _handle_headless_run(
         return _error_result("ghidra_error", str(exc))
     finally:
         if drain is not None:
-            queue.put_nowait(None)
+            # The sentinel must ride the same loop queue as the ticks, otherwise it
+            # overtakes callbacks still pending from the executor thread.
+            loop.call_soon_threadsafe(queue.put_nowait, None)
             await drain
         state.native_running -= 1
 
