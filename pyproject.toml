@@ -29,6 +29,7 @@ dependencies = [
   "pyghidra>=3.0.2,<4",
   "anyio>=4.9,<5",
   "jsonschema>=4.20,<5",
+  "uvicorn>=0.31.1,<1",
 ]
 
 [project.scripts]

@@ -730,6 +730,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "pyghidra" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -748,6 +749,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "pyghidra", specifier = ">=3.0.2,<4" },
+    { name = "uvicorn", specifier = ">=0.31.1,<1" },
 ]
 
 [package.metadata.requires-dev]

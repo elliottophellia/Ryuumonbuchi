@@ -42,6 +42,10 @@ class AppConfig:
     class_files: tuple[str, ...] = ()
     allow_export: bool = False
     allow_import_bytes: bool = False
+    transport: str = "stdio"
+    http_host: str = "127.0.0.1"
+    http_port: int = 8765
+    http_path: str = "/mcp"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -53,6 +57,7 @@ class AppConfig:
         _validate_positive_limit("max_response_bytes", self.max_response_bytes)
         _validate_positive_limit("max_log_tail_bytes", self.max_log_tail_bytes)
         _validate_positive_limit("max_import_bytes", self.max_import_bytes)
+        _validate_transport(self.transport, self.http_port, self.http_path)
 
 
 _DEFAULT_GHIDRA_DIR: Final = Path("/usr/share/ghidra")
@@ -69,6 +74,10 @@ _BOOL_ENV_NAMES: Final = {
     "allow_export": "RYUUMONBUCHI_ALLOW_EXPORT",
     "allow_import_bytes": "RYUUMONBUCHI_ALLOW_IMPORT_BYTES",
 }
+_TRANSPORTS: Final = frozenset({"stdio", "http"})
+_DEFAULT_HTTP_HOST: Final = "127.0.0.1"
+_DEFAULT_HTTP_PORT: Final = 8765
+_DEFAULT_HTTP_PATH: Final = "/mcp"
 
 
 _TRUE_VALUES: Final = frozenset({"1", "true", "yes", "on"})
@@ -115,6 +124,50 @@ def _validate_limits(max_heap_mb: int, max_cpu: int, timeout: int) -> None:
     if type(timeout) is not int or not 30 <= timeout <= 86400:
         message = "operation_timeout_seconds must be between 30 and 86400 seconds"
         raise ConfigError(message)
+
+
+def _validate_transport(transport: str, http_port: int, http_path: str) -> None:
+    if transport not in _TRANSPORTS:
+        message = "transport must be 'stdio' or 'http'"
+        raise ConfigError(message)
+    if type(http_port) is not int or not 1 <= http_port <= 65535:
+        message = "http_port must be between 1 and 65535"
+        raise ConfigError(message)
+    if not http_path.startswith("/"):
+        message = "http_path must start with '/'"
+        raise ConfigError(message)
+
+
+def _text_value(
+    env_name: str,
+    cli_value: str | None,
+    environ: Mapping[str, str],
+    default: str,
+) -> str:
+    if cli_value is not None:
+        return cli_value
+    raw = environ.get(env_name)
+    if raw is None:
+        return default
+    return raw.strip()
+
+
+def _int_env_value(
+    env_name: str,
+    cli_value: int | None,
+    environ: Mapping[str, str],
+    default: int,
+) -> int:
+    if cli_value is not None:
+        return cli_value
+    raw = environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        message = f"{env_name} must be an integer"
+        raise ConfigError(message) from exc
 
 
 def _limit_value(
@@ -228,6 +281,10 @@ def build_config(
     classpaths: list[str] | None = None,
     class_files: list[str] | None = None,
     vm_args: list[str] | None = None,
+    transport: str | None = None,
+    http_host: str | None = None,
+    http_port: int | None = None,
+    http_path: str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> AppConfig:
     """Build configuration using CLI-over-environment-over-default precedence."""
@@ -248,6 +305,10 @@ def build_config(
         class_files=_resolve_class_files(class_files, env),
         allow_export=_bool_flag("allow_export", allow_export, env, False),
         allow_import_bytes=_bool_flag("allow_import_bytes", allow_import_bytes, env, False),
+        transport=_text_value("RYUUMONBUCHI_TRANSPORT", transport, env, "stdio"),
+        http_host=_text_value("RYUUMONBUCHI_HTTP_HOST", http_host, env, _DEFAULT_HTTP_HOST),
+        http_port=_int_env_value("RYUUMONBUCHI_HTTP_PORT", http_port, env, _DEFAULT_HTTP_PORT),
+        http_path=_text_value("RYUUMONBUCHI_HTTP_PATH", http_path, env, _DEFAULT_HTTP_PATH),
     )
 
 

@@ -11,7 +11,7 @@
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
 
-A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio, and drives one persistent PyGhidra/JVM backend per connection.
+A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio or streamable HTTP, and drives one persistent PyGhidra/JVM backend per connection.
 
 [Overview](#overview) &middot; [Architecture](#architecture) &middot; [Prerequisites](#prerequisites) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage) &middot; [Development](#development)
 
@@ -19,28 +19,28 @@ A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that
 
 ## Overview
 
-Ryuumonbuchi turns Ghidra into an MCP tool server. An agent connects over stdio, opens a binary, and drives analysis through typed tool calls: decompilation, disassembly, type reconstruction, patching, symbol and memory edits, and project export. No GUI automation, no hand-written `analyzeHeadless` scripts.
+Ryuumonbuchi turns Ghidra into an MCP tool server. An agent connects over stdio or streamable HTTP, opens a binary, and drives analysis through typed tool calls: decompilation, disassembly, type reconstruction, patching, symbol and memory edits, and project export. No GUI automation, no hand-written `analyzeHeadless` scripts.
 
 The server uses the low-level MCP SDK (`mcp.server.lowlevel`) with a registry generated from one authoritative catalog. The catalog declares 216 dotted tool names. 212 of them map one-to-one onto methods of a persistent backend; `health.ping` and `mcp.response_format` are server-native, `headless.run` is the native launcher path, and `operation.batch` is the batching dispatcher. The catalog does not promise coverage of every Ghidra API; it covers the surface those 212 methods implement.
 
-Behind the stdio front end, one persistent worker child holds a live PyGhidra/JVM session for the whole MCP lifespan. Repeated calls reuse the warmed backend instead of paying JVM startup per request.
+Behind the transport, one persistent worker child holds a live PyGhidra/JVM session for the whole MCP lifespan. Repeated calls reuse the warmed backend instead of paying JVM startup per request.
 
 ## Architecture
 
 ```
- MCP client ── stdio (JSON-RPC) ──► Ryuumonbuchi server
-                                   (low-level SDK, schema/policy dispatch)
-                                              │
-                                              │ protocol-v2, 8-byte length-prefixed socket IPC
-                                              ▼
-                                   persistent worker child
-                                   (lazy PyGhidra/JVM, multiple program sessions)
-                                              │
-                           ┌──────────────────┴───────────────────┐
-                           ▼                                      ▼
-                   backend (PyGhidra)              headless.run ── analyzeHeadless
-                   program sessions,                (separate process group)
-                   decompiler, analysis
+ MCP client ── stdio or streamable HTTP ──► Ryuumonbuchi server
+                                          (low-level SDK, schema/policy dispatch)
+                                                     │
+                                                     │ protocol-v2, 8-byte length-prefixed socket IPC
+                                                     ▼
+                                          persistent worker child
+                                          (lazy PyGhidra/JVM, multiple program sessions)
+                                                     │
+                                  ┌──────────────────┴───────────────────┐
+                                  ▼                                      ▼
+                          backend (PyGhidra)              headless.run ── analyzeHeadless
+                          program sessions,                (separate process group)
+                          decompiler, analysis
 ```
 
 Three dispatch paths:
@@ -103,6 +103,10 @@ Precedence is CLI flag over environment variable over built-in default. Classpat
 | `--vmarg ARG` (repeatable) | `RYUUMONBUCHI_VMARGS` (shlex) | empty | Extra JVM arguments |
 | `--allow-export` | `RYUUMONBUCHI_ALLOW_EXPORT` | disabled | Enable export and save tools |
 | `--allow-import-bytes` | `RYUUMONBUCHI_ALLOW_IMPORT_BYTES` | disabled | Enable `program.open_bytes` |
+| `--transport {stdio,http}` | `RYUUMONBUCHI_TRANSPORT` | `stdio` | MCP transport to serve |
+| `--http-host HOST` | `RYUUMONBUCHI_HTTP_HOST` | `127.0.0.1` | Bind address for `--transport http` |
+| `--http-port PORT` | `RYUUMONBUCHI_HTTP_PORT` | `8765` | Bind port for `--transport http`, 1 to 65535 |
+| `--http-path PATH` | `RYUUMONBUCHI_HTTP_PATH` | `/mcp` | Streamable HTTP mount path |
 
 > [!IMPORTANT]
 > `program.export_binary`, `program.export_packed`, `program.save`, `program.save_as`, and `project.export` require `RYUUMONBUCHI_ALLOW_EXPORT=1` or `--allow-export`. `program.open_bytes` requires `RYUUMONBUCHI_ALLOW_IMPORT_BYTES=1` or `--allow-import-bytes`, and obeys the byte cap. Both gates default to deny.
@@ -191,6 +195,32 @@ args = ["ryuumonbuchi", "--ghidra-install-dir", "/usr/share/ghidra"]
 RYUUMONBUCHI_MAX_CPU = "4"
 RYUUMONBUCHI_MAX_HEAP_MB = "2048"
 ```
+
+### Streamable HTTP
+
+The default transport is stdio. `--transport http` serves the same tool surface over MCP streamable HTTP:
+
+```bash
+uv run ryuumonbuchi --transport http --http-port 8765
+```
+
+Clients connect to `http://127.0.0.1:8765/mcp`:
+
+```json
+{
+  "mcpServers": {
+    "ryuumonbuchi": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+One process serves one persistent worker and one JVM. Concurrent HTTP sessions share it and serialize on the worker lock.
+
+> [!WARNING]
+> The HTTP transport is unauthenticated. It binds `127.0.0.1` by default, where DNS-rebinding protection restricts `Host` and `Origin` to loopback. Binding beyond loopback (`--http-host 0.0.0.0`) exposes every tool, including `headless.run`, `ghidra.eval`, and `ghidra.script`, to anyone who can reach the port. Put it behind an authenticating reverse proxy or a private network boundary.
 
 ## Development
 

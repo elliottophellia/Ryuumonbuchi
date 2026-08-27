@@ -348,8 +348,11 @@ async def _handle_batch(
 
 
 def main(config: AppConfig) -> None:
-    """Run the MCP server over stdio."""
+    """Run the MCP server over the configured transport."""
     server = create_server(config)
+    if config.transport == "http":
+        _run_http(server, config)
+        return
 
     async def run() -> None:
         from mcp.server.stdio import stdio_server
@@ -362,3 +365,19 @@ def main(config: AppConfig) -> None:
             )
 
     anyio.run(run)
+
+
+def _run_http(server: Server[ServerState], config: AppConfig) -> None:
+    """Serve the streamable HTTP transport with uvicorn."""
+    import uvicorn
+
+    app = server.streamable_http_app(
+        streamable_http_path=config.http_path,
+        host=config.http_host,
+    )
+    uvicorn.run(
+        app,
+        host=config.http_host,
+        port=config.http_port,
+        log_level="warning",
+    )
