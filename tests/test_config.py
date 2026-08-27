@@ -155,8 +155,57 @@ def test_resolve_ghidra_install_dir_env(monkeypatch: pytest.MonkeyPatch, fake_gh
     assert resolved == fake_ghidra.resolve()
 
 
+def test_resolve_ghidra_install_dir_linux_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    assert resolve_ghidra_install_dir(environ={}) == Path("/usr/share/ghidra")
+
+
+def test_resolve_ghidra_install_dir_macos_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    assert resolve_ghidra_install_dir(environ={}) == Path("/opt/homebrew/share/ghidra")
+
+
 def test_validate_config(fake_ghidra: Path) -> None:
     config = build_config(ghidra_install_dir=str(fake_ghidra))
     installation = validate_config(config)
     assert installation.version == "12.0.4"
     assert installation.java_min == 21
+
+
+def test_transport_env_resolution(fake_ghidra: Path) -> None:
+    config = build_config(
+        ghidra_install_dir=str(fake_ghidra),
+        environ={
+            "RYUUMONBUCHI_TRANSPORT": "http",
+            "RYUUMONBUCHI_HTTP_HOST": "192.0.2.10",
+            "RYUUMONBUCHI_HTTP_PORT": "9100",
+            "RYUUMONBUCHI_HTTP_PATH": "/rpc",
+        },
+    )
+    assert config.transport == "http"
+    assert config.http_host == "192.0.2.10"
+    assert config.http_port == 9100
+    assert config.http_path == "/rpc"
+
+
+def test_transport_cli_overrides_env(fake_ghidra: Path) -> None:
+    config = build_config(
+        ghidra_install_dir=str(fake_ghidra),
+        transport="stdio",
+        http_port=9200,
+        environ={"RYUUMONBUCHI_TRANSPORT": "http", "RYUUMONBUCHI_HTTP_PORT": "9100"},
+    )
+    assert config.transport == "stdio"
+    assert config.http_port == 9200
+
+
+def test_http_port_env_must_be_integer(fake_ghidra: Path) -> None:
+    with pytest.raises(ConfigError, match="RYUUMONBUCHI_HTTP_PORT must be an integer"):
+        build_config(
+            ghidra_install_dir=str(fake_ghidra),
+            environ={"RYUUMONBUCHI_HTTP_PORT": "notaport"},
+        )

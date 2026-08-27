@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,7 +30,8 @@ class RuntimeWorkspace:
     @classmethod
     def create(cls, base: Path | None = None) -> RuntimeWorkspace:
         """Create a fresh private workspace under the system temp dir."""
-        root = (base or Path(os.environ.get("TMPDIR", "/tmp"))) / f"ryuumonbuchi-{uuid.uuid4().hex}"  # noqa: S108
+        base_dir = base or Path(tempfile.gettempdir())
+        root = base_dir / f"ryuumonbuchi-{uuid.uuid4().hex}"
         root.mkdir(mode=0o700, parents=True, exist_ok=False)
         projects = root / "projects"
         projects.mkdir(mode=0o700)

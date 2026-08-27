@@ -55,12 +55,33 @@ def _parser() -> argparse.ArgumentParser:
         metavar="ARG",
         help="additional JVM argument (repeatable)",
     )
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        help="MCP transport to serve (default: stdio)",
+    )
+    parser.add_argument(
+        "--http-host",
+        metavar="HOST",
+        help="bind address for --transport http (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        metavar="PORT",
+        help="bind port for --transport http (default: 8765)",
+    )
+    parser.add_argument(
+        "--http-path",
+        metavar="PATH",
+        help="streamable HTTP mount path (default: /mcp)",
+    )
     parser.add_argument("--version", action="store_true", help="print the package version and exit")
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse options, validate Ghidra, then start MCP stdio."""
+    """Parse options, validate Ghidra, then serve MCP over the configured transport."""
 
     args = _parser().parse_args(argv)
     if args.version:
@@ -80,6 +101,10 @@ def main(argv: list[str] | None = None) -> None:
             vm_args=args.vmarg or None,
             allow_export=args.allow_export,
             allow_import_bytes=args.allow_import_bytes,
+            transport=args.transport,
+            http_host=args.http_host,
+            http_port=args.http_port,
+            http_path=args.http_path,
         )
         validate_config(config)
         run_server(config)

@@ -1,4 +1,4 @@
-"""Catalog consistency: 216 tools, exact grouped set, no legacy names, schema invariants."""
+"""Catalog consistency: 217 tools, exact grouped set, no legacy names, schema invariants."""
 
 from __future__ import annotations
 
@@ -230,7 +230,7 @@ EXPECTED_GROUPS: dict[str, set[str]] = {
 }
 
 EXPECTED_SERVER_TOOLS = {"health.ping", "mcp.response_format"}
-EXPECTED_EXTENSION_TOOLS = {"headless.run", "operation.batch"}
+EXPECTED_EXTENSION_TOOLS = {"headless.run", "headless.start", "operation.batch"}
 
 BATCH_EXCLUSIONS = {
     "health.ping",
@@ -240,6 +240,7 @@ BATCH_EXCLUSIONS = {
     "ghidra.info",
     "ghidra.script",
     "headless.run",
+    "headless.start",
     "operation.batch",
     "program.open",
     "program.open_bytes",
@@ -267,7 +268,7 @@ BATCH_EXCLUSIONS = {
 
 
 def test_exact_tool_count() -> None:
-    assert len(TOOL_SPECS) == 216
+    assert len(TOOL_SPECS) == 217
 
 
 def test_unique_names() -> None:
@@ -387,6 +388,22 @@ def test_headless_run_classification() -> None:
     assert "arguments" in props
     assert props["arguments"]["type"] == "array"
     assert "items" in props["arguments"]
+
+
+def test_headless_start_classification() -> None:
+    spec = get_tool("headless.start")
+    assert spec is not None
+    assert spec.backend_method is None
+    assert spec.read_only is False
+    assert spec.destructive is True
+    assert spec.open_world is True
+    assert spec.batch_allowed is False
+    props = spec.input_schema["properties"]
+    assert "arguments" in props
+    assert props["arguments"]["type"] == "array"
+    assert "items" in props["arguments"]
+    # Background runs have no PTY: terminal capture is not offered.
+    assert "terminal" not in props
 
 
 def test_operation_batch_classification() -> None:

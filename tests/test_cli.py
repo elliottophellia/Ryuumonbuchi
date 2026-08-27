@@ -64,6 +64,36 @@ def test_parser_no_args_defaults() -> None:
     assert args.classpath == []
     assert args.class_file == []
     assert args.vmarg == []
+    assert args.transport is None
+    assert args.http_host is None
+    assert args.http_port is None
+    assert args.http_path is None
+
+
+def test_parser_has_transport_args() -> None:
+    parser = _parser()
+    args = parser.parse_args(
+        [
+            "--transport",
+            "http",
+            "--http-host",
+            "192.0.2.10",
+            "--http-port",
+            "9000",
+            "--http-path",
+            "/rpc",
+        ]
+    )
+    assert args.transport == "http"
+    assert args.http_host == "192.0.2.10"
+    assert args.http_port == 9000
+    assert args.http_path == "/rpc"
+
+
+def test_parser_rejects_unknown_transport() -> None:
+    parser = _parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--transport", "grpc"])
 
 
 def test_main_version_prints(capsys: pytest.CaptureFixture[str]) -> None:

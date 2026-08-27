@@ -1,15 +1,15 @@
 ---
 name: ryuumonbuchi
-description: Operate the Ryuumonbuchi MCP server for headless Ghidra reverse engineering. Use when driving decompilation, disassembly, patching, type and symbol recovery, memory edits, transactions, and Ghidra project analysis through a Ryuumonbuchi stdio server. Covers the safe read-only-first workflow, session and address discipline, mutation and transaction rules, headless.run, task and error recovery, raw ghidra.call/ghidra.eval/ghidra.script escape hatches, and a sleep/timing-gate bypass recipe.
+description: Operate the Ryuumonbuchi MCP server for headless Ghidra reverse engineering. Use when driving decompilation, disassembly, patching, type and symbol recovery, memory edits, transactions, and Ghidra project analysis through a Ryuumonbuchi server (stdio or streamable HTTP). Covers the safe read-only-first workflow, session and address discipline, mutation and transaction rules, headless.run, task and error recovery, raw ghidra.call/ghidra.eval/ghidra.script escape hatches, and a sleep/timing-gate bypass recipe.
 license: GPL-2.0-only
-compatibility: Linux, Python 3.13, Ghidra 12.0 or newer with Java 21+
+compatibility: Linux, macOS, Python 3.10–3.13, Ghidra 12.0 or newer with Java 21+
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Ryuumonbuchi
 
-Ryuumonbuchi exposes a Ghidra reverse-engineering surface as an MCP server with 216 dotted tool names over 212 backend methods. One persistent worker child holds a lazy PyGhidra/JVM backend. Sessions open read-only by default.
+Ryuumonbuchi exposes a Ghidra reverse-engineering surface as an MCP server with 217 dotted tool names over 212 backend methods. One persistent worker child holds a lazy PyGhidra/JVM backend. Sessions open read-only by default.
 
 ## Safe workflow
 

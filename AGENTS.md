@@ -13,7 +13,7 @@ Instructions for contributors who edit this repository. These are durable conven
 | `src/ryuumonbuchi/py.typed` | PEP 561 type marker |
 | `src/ryuumonbuchi/cli.py` | Startup, argument parsing, exit code 2 on config failure |
 | `src/ryuumonbuchi/config.py` | Limits, validation, environment names, precedence |
-| `src/ryuumonbuchi/server.py` | MCP boundary and policy dispatch |
+| `src/ryuumonbuchi/server.py` | MCP boundary, policy dispatch, stdio and streamable HTTP transports |
 | `src/ryuumonbuchi/catalog/__init__.py` | Authoritative tool schemas and annotations |
 | `src/ryuumonbuchi/catalog/schema.py` | `ToolSpec` dataclass and input-schema helpers |
 | `src/ryuumonbuchi/catalog/order.py` | Canonical tool ordering |
@@ -42,7 +42,7 @@ Instructions for contributors who edit this repository. These are durable conven
 | `src/ryuumonbuchi/backend/references.py` | `_ReferenceMixin`: imports/exports, xrefs, external metadata, equates |
 | `src/ryuumonbuchi/backend/functions.py` | `_FunctionMixin`: function/parameter/variable operations |
 | `src/ryuumonbuchi/backend/types.py` | `_TypeMixin`: type/struct/enum/layout operations |
-| `src/ryuumonbuchi/native.py` | Exact `analyzeHeadless` execution |
+| `src/ryuumonbuchi/native.py` | Exact `analyzeHeadless` execution and `NativeTaskRecord` |
 | `src/ryuumonbuchi/session.py` | Private workspace management |
 | `tests/` | Catalog counts, schema invariants, CLI/config, lifecycle, live workflow |
 
@@ -50,15 +50,17 @@ Instructions for contributors who edit this repository. These are durable conven
 
 Preserve these when editing. An intentional break requires updating the exact-set tests in the same change.
 
-- Runtime is Python 3.13, Linux, Ghidra 12+.
+- Runtime is Python 3.10–3.13, Linux or macOS, Ghidra 12+. Windows is unsupported.
 - `health.ping` remains JVM-lazy; it never starts the backend.
-- The catalog declares 216 unique dotted tool names and 212 one-to-one backend methods. Changing either count updates `tests/test_catalog.py`.
+- The catalog declares 217 unique dotted tool names and 212 one-to-one backend methods. Changing either count updates `tests/test_catalog.py`.
 - Root schemas reject extra properties and bound arrays, pages, and payloads.
 - Tool annotations (`read_only`, `destructive`, `open_world`, `batch_allowed`) must match the backend method's mutation behavior.
 - Protocol changes update the parent, the worker, `models.py`, and lifecycle tests together.
 - Worker and native processes stay shell-free and own their process groups.
 - Workspaces and captures keep 0700 and 0600 permissions.
 - Import and export stay default-deny behind `RYUUMONBUCHI_ALLOW_EXPORT` and `RYUUMONBUCHI_ALLOW_IMPORT_BYTES`.
+- Native `headless.start` tasks live in the parent (`ServerState.native_tasks`) and are addressed by a `native-` prefixed id; `task.status`/`task.result`/`task.cancel` route on that prefix before reaching the worker.
+- `analysis.update_and_wait` keeps its blocking worker method; the parent only polls it when the caller supplies a progress token.
 
 ## Change recipes
 

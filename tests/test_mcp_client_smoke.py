@@ -38,7 +38,8 @@ async def _run_smoke(config: AppConfig) -> None:
                 names = {tool.name for tool in tools.tools}
                 assert "health.ping" in names
                 assert "mcp.response_format" in names
-                assert len(names) == 216
+                assert "headless.start" in names
+                assert len(names) == 217
 
                 ping = await client.call_tool("health.ping", {})
                 assert not ping.is_error
