@@ -4,7 +4,7 @@ description: Operate the Ryuumonbuchi MCP server for headless Ghidra reverse eng
 license: GPL-2.0-only
 compatibility: Linux, Python 3.13, Ghidra 12.0 or newer with Java 21+
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Ryuumonbuchi

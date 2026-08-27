@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://cdn.rei.my.id/images/Ryuumonbuchi.png?v=1.0.0" alt="Ryuumonbuchi" />
+<img src="https://cdn.rei.my.id/images/Ryuumonbuchi.png?v=1.1.0" alt="Ryuumonbuchi" />
 
 # Ryuumonbuchi
 
