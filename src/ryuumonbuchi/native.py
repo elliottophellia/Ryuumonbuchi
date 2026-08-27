@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import select
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +105,8 @@ class NativeRunner:
         stdin_text: str | None = None,
         terminal: bool = False,
         timeout_seconds: int | None = None,
+        progress: Callable[[float, float | None, str | None], None] | None = None,
+        on_spawn: Callable[[subprocess.Popen[bytes]], None] | None = None,
     ) -> NativeResult:
         """Invoke analyzeHeadless directly and capture complete output."""
         ghidra_dir = str(self.config.ghidra_install_dir)
@@ -143,11 +147,26 @@ class NativeRunner:
                     message = "terminal capture path unavailable"
                     raise NativeSpawnError(message)
                 returncode = self._run_terminal(
-                    argv, env, cwd, stdin_text, terminal_path, timeout_seconds
+                    argv,
+                    env,
+                    cwd,
+                    stdin_text,
+                    terminal_path,
+                    timeout_seconds,
+                    progress,
+                    on_spawn,
                 )
             else:
                 returncode = self._run_piped(
-                    argv, env, cwd, stdin_text, stdout_path, stderr_path, timeout_seconds
+                    argv,
+                    env,
+                    cwd,
+                    stdin_text,
+                    stdout_path,
+                    stderr_path,
+                    timeout_seconds,
+                    progress,
+                    on_spawn,
                 )
         except NativeRunError:
             raise
@@ -234,13 +253,16 @@ class NativeRunner:
         stdout_path: Path,
         stderr_path: Path,
         timeout_seconds: int,
+        progress: Callable[[float, float | None, str | None], None] | None = None,
+        on_spawn: Callable[[subprocess.Popen[bytes]], None] | None = None,
     ) -> int:
         stdin_data = stdin_text.encode("utf-8") if stdin_text is not None else None
 
         stdout_fd = os.open(str(stdout_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         stderr_fd = os.open(str(stderr_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         proc: subprocess.Popen[bytes] | None = None
-        deadline = time.monotonic() + timeout_seconds
+        started = time.monotonic()
+        deadline = started + timeout_seconds
         try:
             proc = self._launch(
                 argv,
@@ -250,6 +272,8 @@ class NativeRunner:
                 stdout_target=stdout_fd,
                 stderr_target=stderr_fd,
             )
+            if on_spawn is not None:
+                on_spawn(proc)
             if stdin_data is not None and proc.stdin is not None:
                 proc.stdin.write(stdin_data)
                 proc.stdin.close()
@@ -262,6 +286,8 @@ class NativeRunner:
                 try:
                     proc.wait(timeout=min(remaining, 1.0))
                 except subprocess.TimeoutExpired:
+                    if progress is not None:
+                        progress(time.monotonic() - started, float(timeout_seconds), None)
                     continue
                 return proc.returncode
         except NativeTimeoutError:
@@ -276,12 +302,15 @@ class NativeRunner:
         stdin_text: str | None,
         terminal_path: Path,
         timeout_seconds: int,
+        progress: Callable[[float, float | None, str | None], None] | None = None,
+        on_spawn: Callable[[subprocess.Popen[bytes]], None] | None = None,
     ) -> int:
         import pty
 
         master_fd, slave_fd = pty.openpty()
         proc: subprocess.Popen[bytes] | None = None
-        deadline = time.monotonic() + timeout_seconds
+        started = time.monotonic()
+        deadline = started + timeout_seconds
         try:
             with terminal_path.open("wb") as term_f:
                 proc = self._launch(
@@ -292,6 +321,8 @@ class NativeRunner:
                     stdout_target=slave_fd,
                     stderr_target=slave_fd,
                 )
+                if on_spawn is not None:
+                    on_spawn(proc)
                 self._close_fd(slave_fd)
                 slave_fd = -1
 
@@ -305,6 +336,8 @@ class NativeRunner:
                         message = f"native headless run timed out after {timeout_seconds}s"
                         raise NativeTimeoutError(message)
                     ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
+                    if progress is not None:
+                        progress(time.monotonic() - started, float(timeout_seconds), None)
                     if master_fd in ready:
                         try:
                             data = os.read(master_fd, 4096)
@@ -315,8 +348,6 @@ class NativeRunner:
                         term_f.write(data)
                     if proc.poll() is not None and not ready:
                         break
-
-                proc.wait(timeout=deadline - time.monotonic())
                 return proc.returncode
         except NativeTimeoutError:
             self._terminate_group(proc)
@@ -347,3 +378,32 @@ class NativeRunner:
         except (UnicodeDecodeError, ValueError):
             text = raw.decode("latin-1", errors="replace")
         return text, truncated
+
+
+@dataclass(slots=True)
+class NativeTaskRecord:
+    """Tracks one backgrounded analyzeHeadless run started by headless.start."""
+
+    task_id: str
+    arguments: list[str]
+    future: asyncio.Future[NativeResult] | None = None
+    proc: subprocess.Popen[bytes] | None = None
+    cancel_requested: bool = False
+    created_at: float = field(default_factory=time.time)
+    started_monotonic: float = field(default_factory=time.monotonic)
+    kind: str = "headless.start"
+    timeout_seconds: int | None = None
+    error: str | None = None
+    result: NativeResult | None = None
+
+    def state(self) -> str:
+        """Return the task lifecycle state for task.status/task.result."""
+        if self.future is None:
+            return "queued"
+        if not self.future.done():
+            return "cancelling" if self.cancel_requested else "running"
+        if self.future.cancelled():
+            return "cancelled"
+        if self.error is not None:
+            return "cancelled" if self.cancel_requested else "failed"
+        return "completed"

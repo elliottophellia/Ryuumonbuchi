@@ -11,7 +11,7 @@
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
 
-A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio or streamable HTTP, and drives one persistent PyGhidra/JVM backend per connection.
+A 217-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and macOS with Python 3.11 through 3.13, speaks MCP over stdio or streamable HTTP, and drives one persistent PyGhidra/JVM backend per connection.
 
 [Overview](#overview) &middot; [Architecture](#architecture) &middot; [Prerequisites](#prerequisites) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage) &middot; [Development](#development)
 
@@ -21,7 +21,7 @@ A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that
 
 Ryuumonbuchi turns Ghidra into an MCP tool server. An agent connects over stdio or streamable HTTP, opens a binary, and drives analysis through typed tool calls: decompilation, disassembly, type reconstruction, patching, symbol and memory edits, and project export. No GUI automation, no hand-written `analyzeHeadless` scripts.
 
-The server uses the low-level MCP SDK (`mcp.server.lowlevel`) with a registry generated from one authoritative catalog. The catalog declares 216 dotted tool names. 212 of them map one-to-one onto methods of a persistent backend; `health.ping` and `mcp.response_format` are server-native, `headless.run` is the native launcher path, and `operation.batch` is the batching dispatcher. The catalog does not promise coverage of every Ghidra API; it covers the surface those 212 methods implement.
+The server uses the low-level MCP SDK (`mcp.server.lowlevel`) with a registry generated from one authoritative catalog. The catalog declares 217 dotted tool names. 212 of them map one-to-one onto methods of a persistent backend; `health.ping` and `mcp.response_format` are server-native, `headless.run` and `headless.start` are the native launcher paths, and `operation.batch` is the batching dispatcher. The catalog does not promise coverage of every Ghidra API; it covers the surface those 212 methods implement.
 
 Behind the transport, one persistent worker child holds a live PyGhidra/JVM session for the whole MCP lifespan. Repeated calls reuse the warmed backend instead of paying JVM startup per request.
 
@@ -113,7 +113,7 @@ Precedence is CLI flag over environment variable over built-in default. Classpat
 
 ## Tool surface
 
-All 216 tools use dotted names and take a JSON object. Backend tools generally accept a `session_id` (returned by `program.open` or `program.open_bytes`) and are batch-eligible. A representative slice, drawn from the catalog:
+All 217 tools use dotted names and take a JSON object. Backend tools generally accept a `session_id` (returned by `program.open` or `program.open_bytes`) and are batch-eligible. A representative slice, drawn from the catalog:
 
 | Category | Example tools |
 |---|---|
@@ -128,7 +128,7 @@ All 216 tools use dotted names and take a JSON object. Backend tools generally a
 | Projects & metadata | `project.*`, `metadata.query`, `metadata.store` |
 | External, source, relocations | `external.*`, `source.file.*`, `source.map.*`, `relocation.*`, `equate.*` |
 | Open world | `ghidra.call`, `ghidra.eval`, `ghidra.script` |
-| Server-native | `health.ping`, `mcp.response_format`, `headless.run`, `operation.batch` |
+| Server-native | `health.ping`, `mcp.response_format`, `headless.run`, `headless.start`, `operation.batch` |
 
 ## Usage
 
@@ -157,7 +157,16 @@ Function tools accept exact function entries and addresses contained within a fu
 
 Compact output conservatively elides Ghidra-generated local declarations, is not compilable, and reports the omission count. Return to raw C, `decomp.tokens`, `decomp.ast`, or p-code when exact structure matters.
 
-Typed tools come first. Sessions open read-only by default; switch `program.mode.set` to `read_only: false` only before intended mutations. Use `operation.batch` for 1 to 32 atomic program-bound calls. Treat `ghidra.call`, `ghidra.eval`, `ghidra.script`, and `headless.run` as open-world execution. Inspect the second `TextContent` block for the full JSON result; the first is a compact summary. Close sessions with `program.close` when done.
+Typed tools come first. Sessions open read-only by default; switch `program.mode.set` to `read_only: false` only before intended mutations. Use `operation.batch` for 1 to 32 atomic program-bound calls. Treat `ghidra.call`, `ghidra.eval`, `ghidra.script`, `headless.run`, and `headless.start` as open-world execution. Inspect the second `TextContent` block for the full JSON result; the first is a compact summary. Close sessions with `program.close` when done.
+
+### Long operations
+
+`analysis.update_and_wait` and `headless.run` block until they finish. When the client attaches a progress token to the call, both stream `notifications/progress` while they run:
+
+- `analysis.update_and_wait` runs as a worker task and polls it every 2 seconds. `progress` is elapsed seconds, `total` is `operation_timeout_seconds`, and `message` is Ghidra's current analyzer phase (for example `Disassembled 14 K`). Ghidra's task monitor rescopes its own counters per analyzer, so elapsed time is the only monotonic series available. Without a progress token the call keeps its original blocking behavior.
+- `headless.run` reports elapsed seconds against its `timeout_seconds` once per second.
+
+`headless.start` takes the same arguments as `headless.run` minus `terminal`, returns immediately with `{"task_id": "native-<hex>", "status": "running"}`, and is polled with the regular `task.status`, `task.result`, and `task.cancel` tools. `task.cancel` terminates the launcher's whole process group. Background runs have no PTY, so `terminal` capture stays exclusive to `headless.run`.
 
 ### Claude Code
 

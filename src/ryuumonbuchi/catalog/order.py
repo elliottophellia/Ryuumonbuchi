@@ -220,6 +220,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "program.export_packed",
     "project.file.delete",
     "headless.run",
+    "headless.start",
     "operation.batch",
 )
 

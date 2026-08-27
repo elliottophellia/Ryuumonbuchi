@@ -446,6 +446,7 @@ class _AnalysisMixin:
                 session_id=session_id,
                 func=run,
                 cancel_hook=lambda: monitor.cancel(),
+                monitor=monitor,
             )
         except Exception as exc:
             self._fail_analysis_start(record, exc)
@@ -465,7 +466,7 @@ class _AnalysisMixin:
             exc = task.future.exception()
             if exc is not None:
                 error = str(exc)
-        return {
+        payload = {
             "task_id": task_id,
             "kind": task.kind,
             "session_id": task.session_id,
@@ -476,6 +477,30 @@ class _AnalysisMixin:
             "error": error,
             "created_at": task.created_at,
         }
+        payload.update(self._monitor_progress(task.monitor))
+        return payload
+
+    @staticmethod
+    def _monitor_progress(monitor: Any) -> dict[str, Any]:
+        """Read progress from a task monitor, omitting keys it cannot report."""
+        if monitor is None:
+            return {}
+        progress: dict[str, Any] = {}
+        for key, getter in (
+            ("progress", "getProgress"),
+            ("progress_max", "getMaximum"),
+            ("progress_message", "getMessage"),
+        ):
+            method = getattr(monitor, getter, None)
+            if method is None:
+                continue
+            # A monitor that raises simply has nothing to report for this key.
+            value: Any = None
+            with suppress(Exception):
+                value = method()
+            if value is not None:
+                progress[key] = str(value) if key == "progress_message" else value
+        return progress
 
     def task_result(self, task_id: str) -> dict[str, Any]:
         task = self._get_task(task_id)
@@ -782,6 +807,7 @@ class _AnalysisMixin:
         session_id: str | None,
         func: Callable[[], Any],
         cancel_hook: Callable[[], None] | None = None,
+        monitor: Any = None,
     ) -> dict[str, Any]:
         task_id = uuid4().hex
         future = self._executor.submit(func)
@@ -791,6 +817,7 @@ class _AnalysisMixin:
             future=future,
             session_id=session_id,
             cancel_hook=cancel_hook,
+            monitor=monitor,
         )
         with self._lock:
             self._tasks[task_id] = record

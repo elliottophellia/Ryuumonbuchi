@@ -43,7 +43,7 @@ async def _run_http_smoke(config: AppConfig) -> None:
                 tools = await client.list_tools()
                 names = {tool.name for tool in tools.tools}
                 assert "health.ping" in names
-                assert len(names) == 216
+                assert len(names) == 217
 
                 ping = await client.call_tool("health.ping", {})
                 assert ping.is_error is False
