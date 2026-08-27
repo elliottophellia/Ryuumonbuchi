@@ -6,12 +6,12 @@
 
 **Maybe the headless Ghidra MCP you are looking for.**
 
-[![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](LICENSE)
 [![Ghidra](https://img.shields.io/badge/Ghidra-headless-FF6600?style=flat-square)](https://ghidra-sre.org)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E4AF0?style=flat-square)](https://modelcontextprotocol.io)
 
-A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and Python 3.13, speaks MCP over stdio, and drives one persistent PyGhidra/JVM backend per connection.
+A 216-tool [Model Context Protocol](https://modelcontextprotocol.io) server that exposes a [Ghidra](https://ghidra-sre.org) reverse-engineering surface to LLM agents. Runs on Linux and Python 3.11 through 3.13, speaks MCP over stdio, and drives one persistent PyGhidra/JVM backend per connection.
 
 [Overview](#overview) &middot; [Architecture](#architecture) &middot; [Prerequisites](#prerequisites) &middot; [Install](#install) &middot; [Configuration](#configuration) &middot; [Tool surface](#tool-surface) &middot; [Usage](#usage) &middot; [Development](#development)
 
@@ -54,8 +54,8 @@ The private mode-0700 workspace owns every managed Ghidra project, worker log fi
 ## Prerequisites
 
 - Linux host.
-- Python `>=3.13,<3.14`.
-- Ghidra 12.0 or newer, with metadata declaring a Java minimum of 21 (`application.java.min`) and Python 3.13 support (`application.python.supported`). Ghidra bundles its own JDK, so no separate Java install is required when it is present.
+- Python `>=3.11,<3.14`.
+- Ghidra 12.0 or newer, with metadata declaring a Java minimum of 21 (`application.java.min`) and support for the running interpreter's minor version (`application.python.supported`). Ghidra bundles its own JDK, so no separate Java install is required when it is present.
 - [uv](https://docs.astral.sh/uv/) for the documented workflow.
 
 Startup validates the installation before entering the MCP loop. It checks `Ghidra/application.properties`, `Ghidra/Features/PyGhidra/lib/PyGhidra.jar`, and `support/analyzeHeadless`, then exits with code 2 on any configuration failure.

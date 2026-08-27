@@ -312,8 +312,9 @@ def validate_ghidra_installation(path: str | Path) -> GhidraInstallation:
         message = "Ghidra metadata is missing application.python.supported"
         raise ConfigError(message)
     python_supported = tuple(part.strip() for part in raw_python.split(",") if part.strip())
-    if "3.13" not in python_supported:
-        message = "Ghidra installation does not support Python 3.13"
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if running not in python_supported:
+        message = f"Ghidra installation does not support Python {running}"
         raise ConfigError(message)
     return GhidraInstallation(resolved, raw_version, java_min, python_supported)
 

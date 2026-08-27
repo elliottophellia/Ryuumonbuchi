@@ -89,7 +89,7 @@ def fake_ghidra(tmp_path: Path) -> Path:
     (root / "Ghidra/application.properties").write_text(
         "application.version=12.0.4\n"
         "application.java.min=21\n"
-        "application.python.supported=3.13,3.12\n",
+        "application.python.supported=3.13,3.12,3.11\n",
         encoding="utf-8",
     )
     (root / "Ghidra/Features/PyGhidra/lib/PyGhidra.jar").touch()
