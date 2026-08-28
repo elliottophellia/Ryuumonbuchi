@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "GPL-2.0-only"
 license-files = ["LICENSE"]
-authors = [{ name = "Ryuumonbuchi contributors" }]
+authors = [{ name = "elliottophellia" }]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
