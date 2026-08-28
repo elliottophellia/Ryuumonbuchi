@@ -5,7 +5,7 @@
 ### Added
 
 - macOS as a supported host. `Darwin` passes the platform gate, the default installation directory becomes `/opt/homebrew/share/ghidra`, the worker skips the Linux-only affinity syscalls, and the workspace root comes from `tempfile.gettempdir()`.
-- Python 3.11 and 3.12 support alongside 3.13.
+- Python 3.10, 3.11, 3.12, and 3.13 support.
 - A streamable HTTP transport behind `--transport http` with `--http-host`, `--http-port`, and `--http-path` (and matching `RYUUMONBUCHI_TRANSPORT`, `RYUUMONBUCHI_HTTP_HOST`, `RYUUMONBUCHI_HTTP_PORT`, `RYUUMONBUCHI_HTTP_PATH`). It binds loopback with DNS-rebinding protection and carries no authentication.
 - Progress notifications for long operations. `analysis.update_and_wait` polls its worker task every 2 seconds and reports elapsed seconds plus Ghidra's current analyzer phase; `headless.run` reports elapsed seconds against its timeout. Both keep their original blocking behavior when the caller sends no progress token.
 - `headless.start`, a 217th tool that backgrounds `analyzeHeadless` and returns a `native-` prefixed task id served by `task.status`, `task.result`, and `task.cancel`.
